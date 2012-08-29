@@ -1,0 +1,11 @@
+python-lua (0.2-1) unstable; urgency=low
+
+  * New release with many fixes, especially regarding object ownership.
+
+ -- Bas Wijnen <wijnen@debian.org>  Fri, 15 Jun 2012 20:01:27 +0200
+
+python-lua (0.1-1) unstable; urgency=low
+
+  * Initial release. (Closes: #672344)
+
+ -- Bas Wijnen <wijnen@debian.org>  Thu, 10 May 2012 10:34:16 +0200

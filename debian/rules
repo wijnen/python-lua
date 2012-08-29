@@ -1,0 +1,12 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --with python2
+
+override_dh_auto_build:
+	dh_auto_build
+	ronn -r python-lua.7.ronn
+
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -f python-lua.7

@@ -1,0 +1,14 @@
+Source: python-lua
+Section: python
+Priority: optional
+Maintainer: Bas Wijnen <wijnen@debian.org>
+Build-Depends: debhelper (>= 8), python, python-support, ruby-ronn
+Standards-Version: 3.9.3
+
+Package: python-lua
+Architecture: all
+Depends: ${misc:Depends}, ${python:Depends}, liblua5.1-0
+Description: library for using lua scripts from python
+ This library provides an interface for using lua scripts from python.
+ It can call lua functions, pass any type of objects, including python
+ functions, which can be called from lua.
