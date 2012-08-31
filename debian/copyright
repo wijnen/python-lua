@@ -1,7 +1,7 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: python-lua
 Upstream-Contact: Bas Wijnen <wijnen@debian.org>
-Source: First published in Debian.
+Source: https://github.com/wijnen/python-lua
 
 Files: *
 Copyright: Copyright 2012 Bas Wijnen <wijnen@debian.org>
