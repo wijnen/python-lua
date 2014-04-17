@@ -75,7 +75,7 @@ LUA_MASKCOUNT = 1 << LUA_HOOKCOUNT
 
 class lua (object):
 	_instance = None
-	def __new__ (cls, debug = False):
+	def __new__ (cls, debug = False, loadlib = False, doloadfile = False, io = False, os = False, all = False):
 		if cls._instance is None:
 			cls._instance = super (lua, cls).__new__ (cls)
 			self = cls._instance
@@ -145,8 +145,16 @@ class lua (object):
 			self._lib.lua_pushcclosure (self._state[-1], self._the_tostring, 0)
 			self._lib.lua_setfield (self._state[-1], -2, '__tostring')
 			self._lib.lua_setfield (self._state[-1], LUA_REGISTRYINDEX, 'metatable')
-			if not debug:
+			if not debug and not all:
 				self.run ('debug = nil', name = 'disabling debug')
+			if not loadlib and not all:
+				self.run ('package.loadlib = nil', name = 'disabling loadlib')
+			if not doloadfile and not all:
+				self.run ('loadfile = nil dofile = nil', name = 'disabling loadfile and dofile')
+			if not os and not all:
+				self.run ('os = {clock = os.clock, date = os.date, difftime = os.difftime, setlocale = os.setlocale, time = os.time}', name = 'disabling some of os')
+			if not io and not all:
+				self.run ('io = nil', name = 'disabling io')
 			self._table_remove = self.run ('return table.remove', state = self._state[-1])[0]
 		return cls._instance
 	def run_file (self, script, state = None):
@@ -520,6 +528,8 @@ def _object_get (state):
 		try:
 			b = self._to_python (-1, state)
 			_dprint ('trying to get %s[%s]' % (str (obj), str (b)), 2)
+			if isinstance (b, float) and abs (b - int (b)) < 1e-10:
+				b = int (b - .5)	# Use - .5 so it will be 1 lower; lua users expect 1-based arrays.
 			if isinstance (b, str):
 				if b.startswith ('_'):
 					if b.startswith ('_lua'):
@@ -529,12 +539,14 @@ def _object_get (state):
 						sys.stderr.write ('Trying to get nonexistent object %s[%s]; returning nil.\n' % (str (obj), str (b)))
 						self._push (None)
 						return 1
-				elif b in dir (obj):
+				elif hasattr (obj, b):
 					self._push (getattr (obj, b))
 					return 1
 			self._push (obj[b])
 			return 1
 		except:
+			import traceback
+			traceback.print_exc ()
 			sys.stderr.write ("Trying to get %s[%s], which doesn't exist; returning nil.\n" % (str (obj), str (b)))
 			self._push (None)
 			return 1
@@ -559,6 +571,8 @@ def _object_put (state):
 			if isinstance (obj, dict):
 				obj[key] = value
 			else:
+				if isinstance (key, float) and abs (key - int (key)) < 1e-10:
+					key = int (key - .5)	# Use - .5 so it will be 1 lower; lua users expect 1-based arrays.
 				setattr (obj, key, value)
 			_dprint ('set %s[%s] = %s' % (str (obj), str (key), str (value)), 3)
 			return 0
@@ -613,7 +627,6 @@ def _object_gc (state):
 	try:
 		id = self._lib.lua_touserdata (state, 1)
 		del self._objects[id]
-		self._state.pop ()
 		return 0
 	finally:
 		self._state.pop ()
