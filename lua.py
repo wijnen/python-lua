@@ -5,6 +5,15 @@ import ctypes
 import struct
 import numbers
 
+# Some workarounds to make this file usable in Python 2 as well as 3.
+if sys.version >= '3':
+	long = int
+	makebytes = lambda x: bytes (x, 'utf-8') if isinstance (x, str) else x
+	makestr = lambda x: str (x, 'utf-8') if isinstance (x, bytes) else x
+else:
+	makebytes = lambda x: x
+	makestr = lambda x: x
+
 _DEBUGLEVEL = os.getenv ('LUA_DEBUG')
 if _DEBUGLEVEL:
 	_DEBUGLEVEL = int (_DEBUGLEVEL)
@@ -111,40 +120,40 @@ class lua (object):
 			self._the_tostring = self._factory (_object_tostring)
 			self._lib.lua_createtable (self._state[-1], 0, 16)
 			self._lib.lua_pushcclosure (self._state[-1], self._the_add, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__add')
+			self._lib.lua_setfield (self._state[-1], -2, b'__add')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_sub, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__sub')
+			self._lib.lua_setfield (self._state[-1], -2, b'__sub')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_mul, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__mul')
+			self._lib.lua_setfield (self._state[-1], -2, b'__mul')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_div, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__div')
+			self._lib.lua_setfield (self._state[-1], -2, b'__div')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_mod, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__mod')
+			self._lib.lua_setfield (self._state[-1], -2, b'__mod')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_pow, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__pow')
+			self._lib.lua_setfield (self._state[-1], -2, b'__pow')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_unm, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__unm')
+			self._lib.lua_setfield (self._state[-1], -2, b'__unm')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_concat, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__concat')
+			self._lib.lua_setfield (self._state[-1], -2, b'__concat')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_len, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__len')
+			self._lib.lua_setfield (self._state[-1], -2, b'__len')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_eq, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__eq')
+			self._lib.lua_setfield (self._state[-1], -2, b'__eq')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_lt, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__lt')
+			self._lib.lua_setfield (self._state[-1], -2, b'__lt')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_le, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__le')
+			self._lib.lua_setfield (self._state[-1], -2, b'__le')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_get, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__index')
+			self._lib.lua_setfield (self._state[-1], -2, b'__index')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_put, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__newindex')
+			self._lib.lua_setfield (self._state[-1], -2, b'__newindex')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_call, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__call')
+			self._lib.lua_setfield (self._state[-1], -2, b'__call')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_gc, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__gc')
+			self._lib.lua_setfield (self._state[-1], -2, b'__gc')
 			self._lib.lua_pushcclosure (self._state[-1], self._the_tostring, 0)
-			self._lib.lua_setfield (self._state[-1], -2, '__tostring')
-			self._lib.lua_setfield (self._state[-1], LUA_REGISTRYINDEX, 'metatable')
+			self._lib.lua_setfield (self._state[-1], -2, b'__tostring')
+			self._lib.lua_setfield (self._state[-1], LUA_REGISTRYINDEX, b'metatable')
 			if not debug and not all:
 				self.run ('debug = nil', name = 'disabling debug')
 			if not loadlib and not all:
@@ -180,9 +189,11 @@ class lua (object):
 			state = self._state[-1]
 		if var is not None:
 			self._push (value)
+			var = makebytes (var)
 			self._lib.lua_setfield (state, LUA_GLOBALSINDEX, var)
 		if script is not None:
 			pos = self._lib.lua_gettop (state)
+			script = makebytes (script)
 			if self._lib.luaL_loadbuffer (state, script, len (script), name) != 0:
 				raise ValueError (self._lib.lua_tolstring (state, 1, None))
 			ret = self._lib.lua_pcall (state, 0, LUA_MULTRET, None)
@@ -203,18 +214,18 @@ class lua (object):
 			# module object must be a table, so convert the object to a table.
 			module = {}
 			for key in dir (value):
-				if key.startswith ('_'):
-					if key.startswith ('_lua'):
-						k = '_' + key[4:]
+				k = makebytes (key)
+				if k.startswith (b'_'):
+					if k.startswith (b'_lua'):
+						k = b'_' + k[4:]
 					else:
 						continue
-				else:
-					k = key
 				module[k] = getattr (value, key)
 			value = module
 		self._push_luatable (value)
-		self._lib.lua_setfield (state, LUA_GLOBALSINDEX, name)
-		self.run ('module ("%s")' % name, name = 'loading module %s' % name)
+		n = makebytes (name)
+		self._lib.lua_setfield (state, LUA_GLOBALSINDEX, n)
+		self.run (b'module ("' + n + b'")', name = 'loading module %s' % name)
 	def _to_python (self, index, state = None):
 		_dprint ('creating python value from lua at %d' % index, 1)
 		if state is None:
@@ -229,7 +240,7 @@ class lua (object):
 		elif type == LUA_TNUMBER:
 			return self._lib.lua_tonumber (state, index)
 		elif type == LUA_TSTRING:
-			return self._lib.lua_tolstring (state, index, None)
+			return makestr (self._lib.lua_tolstring (state, index, None))
 		elif type == LUA_TTABLE:
 			_dprint ('creating table', 1)
 			self._lib.lua_pushvalue (state, index)
@@ -254,9 +265,9 @@ class lua (object):
 			self._lib.lua_pushnil (state)
 		elif isinstance (obj, bool):
 			self._lib.lua_pushboolean (state, obj)
-		elif isinstance (obj, int) or isinstance (obj, long):
+		elif isinstance (obj, (int, long)):
 			self._lib.lua_pushinteger (state, obj)
-		elif isinstance (obj, str):
+		elif isinstance (obj, (bytes, str)):
 			self._lib.lua_pushlstring (state, obj, len (obj))
 		elif isinstance (obj, float):
 			self._lib.lua_pushnumber (state, ctypes.c_double (obj))
@@ -273,10 +284,10 @@ class lua (object):
 						continue
 				else:
 					k = key
-				o[k] = getattr (obj, key)
+				o[key] = getattr (obj, key)
 			id = self._lib.lua_newuserdata (state, 1)
 			self._objects[id] = obj
-			self._lib.lua_getfield (state, LUA_REGISTRYINDEX, 'metatable')
+			self._lib.lua_getfield (state, LUA_REGISTRYINDEX, b'metatable')
 			self._lib.lua_setmetatable (state, -2)
 		else:
 			# This shouldn't be possible: everything is an object.
@@ -317,7 +328,7 @@ def _object_add (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -335,7 +346,7 @@ def _object_sub (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -353,7 +364,7 @@ def _object_mul (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -371,7 +382,7 @@ def _object_div (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -389,7 +400,7 @@ def _object_mod (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -407,7 +418,7 @@ def _object_pow (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -424,7 +435,7 @@ def _object_unm (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -442,7 +453,7 @@ def _object_concat (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -459,7 +470,7 @@ def _object_len (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -477,7 +488,7 @@ def _object_eq (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -495,7 +506,7 @@ def _object_lt (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -513,7 +524,7 @@ def _object_le (state):
 			return 1
 		except:
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -530,7 +541,8 @@ def _object_get (state):
 			_dprint ('trying to get %s[%s]' % (str (obj), str (b)), 2)
 			if isinstance (b, float) and abs (b - int (b)) < 1e-10:
 				b = int (b - .5)	# Use - .5 so it will be 1 lower; lua users expect 1-based arrays.
-			if isinstance (b, str):
+			if isinstance (b, (str, bytes)):
+				b = makestr (b)
 				if b.startswith ('_'):
 					if b.startswith ('_lua'):
 						self._push (obj['_' + b[4:]])
@@ -573,13 +585,13 @@ def _object_put (state):
 			else:
 				if isinstance (key, float) and abs (key - int (key)) < 1e-10:
 					key = int (key - .5)	# Use - .5 so it will be 1 lower; lua users expect 1-based arrays.
-				setattr (obj, key, value)
+				setattr (obj, makestr (key), value)
 			_dprint ('set %s[%s] = %s' % (str (obj), str (key), str (value)), 3)
 			return 0
 		except:
-			sys.stderr.write ('error trying to put %s[%s] = %s: %s\n' % (str (obj), str (key), str (value), sys.exc_value))
+			sys.stderr.write ('error trying to put %s[%s] = %s: %s\n' % (str (obj), str (key), str (value), sys.exc_info ()[1]))
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 	finally:
 		self._state.pop ()
@@ -608,13 +620,13 @@ def _object_call (state):
 				self._push (ret)
 				return 1
 		except:
-			sys.stderr.write ('Error: %s\n' % sys.exc_value)
+			sys.stderr.write ('Error: %s\n' % sys.exc_info ()[1])
 			bt = sys.exc_info ()[2]
 			while bt:
 				sys.stderr.write ('\t%s:%d %s\n' % (bt.tb_frame.f_code.co_filename, bt.tb_lineno, bt.tb_frame.f_code.co_name))
 				bt = bt.tb_next
 			self._lib.lua_settop (state, 0)
-			self._push (str (sys.exc_value))
+			self._push (str (sys.exc_info ()[1]))
 			self._lib.lua_error (state)
 			# lua_error does not return.
 	finally:
@@ -699,7 +711,7 @@ class Table:
 		_dprint ('requesting item of lua table: %s' % key, 3)
 		l = lua ()
 		l._lib.lua_rawgeti (l._state[-1], LUA_REGISTRYINDEX, self._id)
-		l._push (key, l._state[-1])
+		l._push (makebytes (key), l._state[-1])
 		l._lib.lua_gettable (l._state[-1], -2)
 		ret = l._to_python (-1, l._state[-1])
 		l._lib.lua_settop (l._state[-1], -3)
@@ -710,7 +722,7 @@ class Table:
 		_dprint ('setting item of lua table: %s: %s' % (key, value), 3)
 		l = lua ()
 		l._lib.lua_rawgeti (l._state[-1], LUA_REGISTRYINDEX, self._id)
-		l._push (key, l._state[-1])
+		l._push (makebytes (key), l._state[-1])
 		l._push (value, l._state[-1])
 		l._lib.lua_settable (l._state[-1], -3)
 		l._lib.lua_settop (l._state[-1], -2)
@@ -725,7 +737,7 @@ class Table:
 		l._lib.lua_rawgeti (l._state[-1], LUA_REGISTRYINDEX, self._id)
 		l._lib.lua_pushnil (l._state[-1])
 		while l._lib.lua_next (l._state[-1], -2) != 0:
-			if l._to_python (-2, l._state[-1]) == key:
+			if makebytes (l._to_python (-2, l._state[-1])) == makebytes (key):
 				l._lib.lua_settop (l._state[-1], -4)
 				return True
 			l._lib.lua_settop (l._state[-1], -2)
