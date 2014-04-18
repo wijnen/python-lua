@@ -210,7 +210,7 @@ class lua (object):
 		_dprint ('creating lua module %s' % name, 5)
 		if state is None:
 			state = self._state[-1]
-		if not isinstance (value, list) and not isinstance (value, dict):
+		if not isinstance (value, (list, dict)):
 			# module object must be a table, so convert the object to a table.
 			module = {}
 			for key in dir (value):
@@ -275,16 +275,6 @@ class lua (object):
 			_dprint ('pushing table', 1)
 			self._lib.lua_rawgeti (state, LUA_REGISTRYINDEX, obj._id)
 		elif isinstance (obj, object):
-			o = {}
-			for key in dir (obj):
-				if key.startswith ('_'):
-					if key.startswith ('_lua'):
-						k = '_' + key[4:]
-					else:
-						continue
-				else:
-					k = key
-				o[key] = getattr (obj, key)
 			id = self._lib.lua_newuserdata (state, 1)
 			self._objects[id] = obj
 			self._lib.lua_getfield (state, LUA_REGISTRYINDEX, b'metatable')
@@ -536,32 +526,24 @@ def _object_get (state):
 	try:
 		id = self._lib.lua_touserdata (state, 1)
 		obj = self._objects[id]
-		try:
-			b = self._to_python (-1, state)
-			_dprint ('trying to get %s[%s]' % (str (obj), str (b)), 2)
-			if isinstance (b, float) and abs (b - int (b)) < 1e-10:
-				b = int (b - .5)	# Use - .5 so it will be 1 lower; lua users expect 1-based arrays.
-			if isinstance (b, (str, bytes)):
-				b = makestr (b)
-				if b.startswith ('_'):
-					if b.startswith ('_lua'):
-						self._push (obj['_' + b[4:]])
-						return 1
-					else:
-						sys.stderr.write ('Trying to get nonexistent object %s[%s]; returning nil.\n' % (str (obj), str (b)))
-						self._push (None)
-						return 1
-				elif hasattr (obj, b):
-					self._push (getattr (obj, b))
-					return 1
-			self._push (obj[b])
+		b = self._to_python (-1, state)
+		_dprint ('trying to get %s[%s]' % (str (obj), str (b)), 2)
+		if isinstance (b, float) and abs (b - int (b)) < 1e-10:
+			b = int (b - .5)	# Use - .5 so it will be 1 lower; lua users expect 1-based arrays.
+		if isinstance (b, (str, bytes)):
+			b = makebytes (b)
+			if b.startswith (b'_'):
+				b = b'_lua' + b[1:]
+		if isinstance (obj, dict):
+			if b in obj:
+				self._push (obj[b])
+				return 1
+		if hasattr (obj, b):
+			self._push (getattr (obj, b))
 			return 1
-		except:
-			import traceback
-			traceback.print_exc ()
-			sys.stderr.write ("Trying to get %s[%s], which doesn't exist; returning nil.\n" % (str (obj), str (b)))
-			self._push (None)
-			return 1
+		sys.stderr.write ("Trying to get nonexistent %s[%s], returning nil.\n" % (str (obj), str (b)))
+		self._push (None)
+		return 1
 	finally:
 		self._state.pop ()
 
@@ -577,15 +559,13 @@ def _object_put (state):
 			value = self._to_python (-1, state)
 			if isinstance (key, str):
 				if key.startswith ('_'):
-					setattr (obj, '_lua' + key[1:], value)
-					_dprint ('set %s[%s] = %s' % (str (obj), str (key), str (value)), 3)
-					return 0
+					key = '_lua' + key[1:]
 			if isinstance (obj, dict):
 				obj[key] = value
 			else:
 				if isinstance (key, float) and abs (key - int (key)) < 1e-10:
 					key = int (key - .5)	# Use - .5 so it will be 1 lower; lua users expect 1-based arrays.
-				setattr (obj, makestr (key), value)
+				setattr (obj, key, value)
 			_dprint ('set %s[%s] = %s' % (str (obj), str (key), str (value)), 3)
 			return 0
 		except:
