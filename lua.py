@@ -538,6 +538,7 @@ def _object_get (state):
 			if b in obj:
 				self._push (obj[b])
 				return 1
+		b = makestr (b)
 		if hasattr (obj, b):
 			self._push (getattr (obj, b))
 			return 1

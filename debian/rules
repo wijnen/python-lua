@@ -1,12 +1,18 @@
 #!/usr/bin/make -f
 
 %:
-	dh $@ --with python2
+	dh $@ --with python2,python3
 
 override_dh_auto_build:
 	dh_auto_build
 	ronn -r python-lua.7.ronn
+	set -ex; for python in $(shell py3versions -r); do $$python setup.py build; done
+
+override_dh_auto_install:
+	dh_auto_install
+	set -ex; for python in $(shell py3versions -r); do $$python setup.py install --root=$(CURDIR)/debian/tmp --install-layout=deb; done
 
 override_dh_auto_clean:
 	dh_auto_clean
 	rm -f python-lua.7
+	rm -f *.pyc *.pyo
