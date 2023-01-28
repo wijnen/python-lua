@@ -1,10 +1,13 @@
-python-lua (0.4-1) UNRELEASED; urgency=medium
+python-lua (0.4-1) unstable; urgency=medium
 
   * New release.
   * Updated standards version to 3.9.5 (no changes needed).
-  * Support python3.
+  * Support (only) python3.
+  * Update to Lua 5.4.
+  * Update debhelper to compat level 10.
+  * Store state in variable of correct type.
 
- -- Bas Wijnen <wijnen@debian.org>  Thu, 03 Apr 2014 01:40:36 -0400
+ -- Bas Wijnen <wijnen@debian.org>  Sat, 28 Jan 2023 17:24:37 +0100
 
 python-lua (0.3-1) unstable; urgency=low
 

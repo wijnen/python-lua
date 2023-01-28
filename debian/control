@@ -2,20 +2,12 @@ Source: python-lua
 Section: python
 Priority: optional
 Maintainer: Bas Wijnen <wijnen@debian.org>
-Build-Depends: debhelper (>= 8), python-all, python3-all, dh-python, ruby-ronn
+Build-Depends: debhelper (>= 10), python3-all, dh-python, python3-setuptools, pybuild-plugin-pyproject
 Standards-Version: 3.9.5
-
-Package: python-lua
-Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}, liblua5.1-0-dev
-Description: library for using lua scripts from python
- This library provides an interface for using lua scripts from python.
- It can call lua functions, pass any type of objects, including python
- functions, which can be called from lua.
 
 Package: python3-lua
 Architecture: all
-Depends: ${misc:Depends}, ${python3:Depends}, liblua5.1-0-dev
+Depends: ${misc:Depends}, ${python3:Depends}, liblua5.4-dev
 Description: library for using lua scripts from python
  This library provides an interface for using lua scripts from python.
  It can call lua functions, pass any type of objects, including python

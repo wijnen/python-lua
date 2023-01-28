@@ -93,15 +93,9 @@ import traceback
 from .luaconst import *
 # }}}
 
-# Some workarounds to make this file usable in Python 2 as well as 3. {{{
-if sys.version >= '3':
-	long = int
-	makebytes = lambda x: bytes(x, 'utf-8') if isinstance(x, str) else x
-	makestr = lambda x: str(x, 'utf-8') if isinstance(x, bytes) else x
-else:
-	bytes = str
-	makebytes = lambda x: x
-	makestr = lambda x: x
+# Some workarounds to make this file usable in Python 2 as well as 3. FIXME: remove these; Python 2 is no longer supported. {{{
+makebytes = lambda x: bytes(x, 'utf-8') if isinstance(x, str) else x
+makestr = lambda x: str(x, 'utf-8') if isinstance(x, bytes) else x
 # }}}
 
 # Debugging settings. {{{
@@ -138,10 +132,10 @@ class Lua(object): # {{{
 
 	@classmethod
 	def _lookup(cls, state):
-		return cls._states[state]
+		return cls._states[state.value]
 
 	def __del__(self):
-		del self._states[self._state]
+		del self._states[self._state.value]
 	# }}}
 
 	def __init__(self, debug = False, loadlib = False, searchers = False, doloadfile = False, io = False, os = False, python_module = True): # {{{
@@ -149,15 +143,9 @@ class Lua(object): # {{{
 		This object provides the interface into the lua library.
 		It also provides access to all the symbols that lua owns.'''
 
-		# Set attrubutes. {{{
-		self._objects = {}
-		self._state = _library.luaL_newstate()
-		# Store back "pointer" to self.
-		assert self._state not in self._states
-		self._states[self._state] = self
-		self._push(self._state)
-		_library.lua_setfield(self._state, LUA_REGISTRYINDEX, b'self')
-		# }}}
+		_library.luaL_newstate.restype = ctypes.c_void_p
+		self._state = ctypes.c_void_p(_library.luaL_newstate())
+		assert self._state.value not in self._states
 
 		# Load standard functions and set return types. {{{
 		_library.luaL_openlibs(self._state)
@@ -169,6 +157,14 @@ class Lua(object): # {{{
 		_library.lua_tothread.restype = ctypes.c_void_p
 		_library.lua_tocfunction.restype = ctypes.c_void_p
 		_library.lua_newuserdatauv.restype = ctypes.c_void_p
+		# }}}
+
+		# Set attributes. {{{
+		self._objects = {}
+		# Store back "pointer" to self.
+		self._states[self._state.value] = self
+		self._push(self._state)
+		_library.lua_setfield(self._state, LUA_REGISTRYINDEX, b'self')
 		# }}}
 
 		# Store operators, because the API does not define them.
@@ -349,7 +345,7 @@ class Lua(object): # {{{
 			_library.lua_pushnil(self._state)
 		elif isinstance(obj, bool):
 			_library.lua_pushboolean(self._state, obj)
-		elif isinstance(obj, (int, long)):
+		elif isinstance(obj, int):
 			_library.lua_pushinteger(self._state, obj)
 		elif isinstance(obj, (bytes, str)):
 			obj = makebytes(obj)
@@ -395,28 +391,28 @@ class Lua(object): # {{{
 # Operator definitions for using Python objects from Lua. {{{
 def _op1(fn):
 	def ret(state):
-		self = Lua._lookup(state)
+		self = Lua._lookup(ctypes.c_void_p(state))
 		try:
 			A = self._to_python(1)
 			self._push(fn(A))
 		except:
-			_library.lua_settop(state, 0)
+			_library.lua_settop(ctypes.c_void_p(state), 0)
 			self._push(str(sys.exc_info()[1]))
-			_library.lua_error(state)
+			_library.lua_error(ctypes.c_void_p(state))
 		return 1
 	return ret
 
 def _op2(fn):
 	def ret(state):
-		self = Lua._lookup(state)
+		self = Lua._lookup(ctypes.c_void_p(state))
 		try:
 			A = self._to_python(1)
 			B = self._to_python(2)
 			self._push(fn(A, B))
 		except:
-			_library.lua_settop(state, 0)
+			_library.lua_settop(ctypes.c_void_p(state), 0)
 			self._push(str(sys.exc_info()[1]))
-			_library.lua_error(state)
+			_library.lua_error(ctypes.c_void_p(state))
 		return 1
 	return ret
 
@@ -537,7 +533,7 @@ def _object_le(A, B): # + {{{
 
 def _object_index(state): # [] (rvalue) {{{
 	_dprint('indexing lua stuff', 1)
-	self = Lua._lookup(state)
+	self = Lua._lookup(ctypes.c_void_p(state))
 	A = self._to_python(1)
 	B = self._to_python(2)
 	_dprint('trying to index %s[%s]' % (str(A), str(B)), 2)
@@ -557,7 +553,7 @@ def _object_index(state): # [] (rvalue) {{{
 
 def _object_newindex(state): # [] (lvalue) {{{
 	_dprint('newindexing lua stuff', 1)
-	self = Lua._lookup(state)
+	self = Lua._lookup(ctypes.c_void_p(state))
 	table = self._to_python(1)
 	key = self._to_python(2)
 	value = self._to_python(3)
@@ -570,16 +566,16 @@ def _object_newindex(state): # [] (lvalue) {{{
 		return 0
 	except:
 		sys.stderr.write('error trying to newindex %s[%s] = %s: %s\n' % (str(table), str(key), str(value), sys.exc_info()[1]))
-		_library.lua_settop(state, 0)
+		_library.lua_settop(ctypes.c_void_p(state), 0)
 		self._push(str(sys.exc_info()[1]))
-		_library.lua_error(state)
+		_library.lua_error(ctypes.c_void_p(state))
 # }}}
 
 def _object_call(state): # () {{{
 	_dprint('calling lua stuff', 1)
-	self = Lua._lookup(state)
+	self = Lua._lookup(ctypes.c_void_p(state))
 	obj = self._to_python(1)
-	num = _library.lua_gettop(state) - 1
+	num = _library.lua_gettop(ctypes.c_void_p(state)) - 1
 	args = [self._to_python(i + 2) for i in range(num)]
 	# Don't bother the user with two self arguments.
 	if isinstance(obj, types.MethodType):
@@ -587,7 +583,7 @@ def _object_call(state): # () {{{
 		args = args[1:]
 	try:
 		ret = obj(*args)
-		_library.lua_settop(state, 0)
+		_library.lua_settop(ctypes.c_void_p(state), 0)
 		if isinstance(ret, tuple):
 			for i in ret:
 				self._push(i)
@@ -601,16 +597,16 @@ def _object_call(state): # () {{{
 		while bt:
 			sys.stderr.write('\t%s:%d %s\n' % (bt.tb_frame.f_code.co_filename, bt.tb_lineno, bt.tb_frame.f_code.co_name))
 			bt = bt.tb_next
-		_library.lua_settop(state, 0)
+		_library.lua_settop(ctypes.c_void_p(state), 0)
 		self._push(str(sys.exc_info()[1]))
-		_library.lua_error(state)
+		_library.lua_error(ctypes.c_void_p(state))
 		# lua_error does not return.
 # }}}
 
 def _object_close(state): # {{{
 	_dprint('closing lua stuff', 0)
-	self = Lua._lookup(state)
-	id = _library.lua_touserdata(state, 1)
+	self = Lua._lookup(ctypes.c_void_p(state))
+	id = _library.lua_touserdata(ctypes.c_void_p(state), 1)
 	arg = self._to_python(-1)
 	self._objects[id].__close__(arg)
 	return 0
@@ -618,15 +614,15 @@ def _object_close(state): # {{{
 
 def _object_gc(state): # {{{
 	_dprint('cleaning lua stuff', 1)
-	self = Lua._lookup(state)
-	id = _library.lua_touserdata(state, 1)
+	self = Lua._lookup(ctypes.c_void_p(state))
+	id = _library.lua_touserdata(ctypes.c_void_p(state), 1)
 	del self._objects[id]
 	return 0
 # }}}
 
 def _object_tostring(state): # {{{
 	_dprint('tostringing lua stuff', 1)
-	self = Lua._lookup(state)
+	self = Lua._lookup(ctypes.c_void_p(state))
 	A = self._to_python(1)
 	self._push(str(A))
 	return 1

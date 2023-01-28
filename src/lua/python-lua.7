@@ -1,5 +1,5 @@
 \" python-lua.7 - manual page for python-lua
-\" Copyright 2012-2022 Bas Wijnen <wijnen@debian.org>
+\" Copyright 2012-2023 Bas Wijnen <wijnen@debian.org>
 \"
 \" This program is free software: you can redistribute it and/or modify
 \" it under the terms of the GNU Affero General Public License as
@@ -14,14 +14,14 @@
 \" You should have received a copy of the GNU Affero General Public License
 \" along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-.TH PYTHON-LUA 7 2022-06-14 "Python-Lua" "Python-Lua"
+.TH PYTHON-LUA 7 2023-01-28 "Python-Lua" "Python-Lua"
 .SH NAME
 python-lua \- using lua scripts from python
 
 .SH SYNOPSIS
 .B import lua
 .br
-.IΒ lua_handle " = lua.lua(debug = " False ", loadlib = " False ", doloadfile = " False ", io = " False ", os = " False ", all = " False ", luaversion = " None )
+.IΒ lua_handle " = lua.Lua(debug = " False ", loadlib = " False ", doloadfile = " False ", io = " False ", os = " False ", all = " False ", luaversion = " None )
 .br
 .IB lua_handle ".run(script = " None ", var = " None ", value = " None ", name = " "python string" )
 .br
@@ -35,9 +35,9 @@ python-lua \- using lua scripts from python
 
 .SH DESCRIPTION
 The lua module interfaces Python code to the Lua library, thus allowing Lua
-scripts to be run from Python. For most operations, a \fIlua.lua\fR object must
-be created. This object does all the work. Creating multiple lua objects from
-one Python program should work, but is untested. When creating a lua instance
+scripts to be run from Python. For most operations, a \fIlua.Lua\fR object must
+be created. This object does all the work. Creating multiple Lua objects from
+one Python program should work, but is untested. When creating a Lua instance
 with \fIdebug\fR set to False (the default), it will automatically run
 \fIself.run('debug = nil')\fR, which will disable the debugging library.
 
@@ -69,26 +69,27 @@ Lua tables are wrapped in a Python object when they are returned. When changes
 are made to this Python object, the change is passed through to the lua object.
 In other words, Lua remains the owner of the table.
 
-Lua doesn't use integers, but only floats. Because it is quite normal to use a
-Lua table as a list, there is a function to convert a table wrapper to a list.
-This is what \fIlua_table._list()\fR does. The underscore is to avoid name
-collisions with table members. There are two things to remember when using it.
-First, Lua starts counting at 1, but Python starts at 0. A value called
-\fIa[3]\fR in Lua is called \fIa._list()[2]\fR in Python. Second, when using
-\fI_list\fR on a table which contains non-integer elements, those elements are
-not present in the returned list.
+Python objects (which are owned by Python) can be created from Lua code using
+the \fIpython\fR module. It has two members, \fIlist\fR and \fIdict\fI, which
+convert a table to a list and dict respectively.
 
-The table wrapper supports most Python operations, but it can be useful to copy
-it to a dict. This is what \fIlua_table._dict()\fR does. Changes made to this
+There are two things to remember when using \fIpython.list\fR.  First, Lua
+starts counting at 1, but Python starts at 0. A value called \fIa[3]\fR in Lua
+is called \fIpython.list(a)[2]\fR. Second, when using \fIpython.list\fR on a
+table which contains non-integer keys, those elements are not present in the
+returned list.
+
+The table wrapper supports most Python operations. It can also be useful to
+copy it to a dict. This is what \fIpython.dict()\fR does. Changes made to this
 dict are not reflected in the lua table that it was copied from.
 
 .SH SECURITY CONSIDERATIONS
 By default, lua has the ability to load any libraries from the system. Lua
 should not be used for scripts from untrusted sources when this is the case.
 
-However, this module is secure by default: it disables the debug library and
-loading of external libraries. If this functionality is needed, it must be
-enabled in the constructor.
+On the other hand, this module is secure by default: it disables the debug
+library and loading of external libraries. If this functionality is needed, it
+must be enabled in the constructor.
 
 When \fIall\fR is set to \fITrue\fR in the constructor, all potentially
 insecure features are enabled.
@@ -97,11 +98,11 @@ insecure features are enabled.
 Lua only supports plain tables, not user objects, as module definitions. This
 means that no callbacks can be added for events which happen in the top level
 of the module. In particular, when a Python module is used as a lua module
-(which is the usual case), a list is built at registration time and passed to
-lua. When new variables are added to the Python module, or existing variables
-are changed so they link to new objects, those changes will not be reflected in
-lua. Similarly, such changes made from lua are not visible in Python. Changing
-the contents of variables is not affected by this problem.
+(which is a common use case), a list is built at registration time and passed
+to lua. When new variables are added to the Python module, or existing
+variables are changed so they link to new objects, those changes will not be
+reflected in lua. Similarly, such changes made from lua are not visible in
+Python. Changing the contents of variables is not affected by this problem.
 
 As a workaround, when changing or creating such variables from Python, you can
 manually add them to lua as well, using \fIlua.run(var = '<name>', value =
