@@ -1,5 +1,5 @@
 # lua.py - Use Lua in Python programs
-# Copyright 2012-2022 Bas Wijnen <wijnen@debian.org> {{{
+# Copyright 2012-2023 Bas Wijnen <wijnen@debian.org> {{{
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as
@@ -93,11 +93,6 @@ import traceback
 from .luaconst import *
 # }}}
 
-# Some workarounds to make this file usable in Python 2 as well as 3. FIXME: remove these; Python 2 is no longer supported. {{{
-makebytes = lambda x: bytes(x, 'utf-8') if isinstance(x, str) else x
-makestr = lambda x: str(x, 'utf-8') if isinstance(x, bytes) else x
-# }}}
-
 # Debugging settings. {{{
 _DEBUGLEVEL = os.getenv('LUA_DEBUG')
 if _DEBUGLEVEL:
@@ -112,17 +107,31 @@ def _dprint(text, level = 0):
 		sys.stderr.write(text + '\n')
 # }}}
 
-# Load shared library and add workarounds for older lua versions. {{{
-# Allow users (or the calling program) to choose their lua version.
-_library = ctypes.CDLL("liblua" + os.getenv('PYTHON_LUA_VERSION', '5.4') + ".so") # TODO: use .dll for Windows.
-if not hasattr(_library, 'lua_len'):
-	_library.lua_len = _library.lua_objlen
+# Load shared library. {{{
+# Do not fail importing without a library; fail when using it. This helps to "pass" a basic import test when liblua is not installed.
+_libraryfilename = "liblua" + os.getenv('PYTHON_LUA_VERSION', '5.4') + ".so" # TODO: use .dll for Windows.
+try:
+	# Allow users (or the calling program) to choose their lua version.
+	_library = ctypes.CDLL(_libraryfilename)
+	if not hasattr(_library, 'lua_len'):
+		_library.lua_len = _library.lua_objlen
+except OSError:
+	print('Warning: %s cannot be loaded; this module will not be functional!' % _libraryfilename)
 # }}}
 
 # Module for accessing some Python parts from Lua. This prepared as a "python" module unless disabled. {{{
+def construct_bytes(arg):
+	'Implementation of python.bytes()'
+	if isinstance(arg, Table):
+		return bytes(arg.list())
+	if isinstance(arg, str):
+		return arg.encode('utf-8')
+	return bytes(arg)
+
 python = {
 	'list': lambda table: table.list(),
-	'dict': lambda table: table.dict()
+	'dict': lambda table: table.dict(),
+	'bytes': construct_bytes
 }
 # }}}
 
@@ -189,17 +198,17 @@ class Lua(object): # {{{
 		self._ops = {}
 		# Binary operators.
 		for op, name in ops.items():
-			self._ops[name] = self.run('return function(a, b) return a %s b end' % op, name = 'get %s' % name)
+			self._ops[name] = self.run(b'return function(a, b) return a %s b end' % op.encode('utf-8'), name = 'get %s' % name)
 		# Unary operators.
-		self._ops['neg'] = self.run('return function(a) return -a end', name = 'get neg')
-		self._ops['invert'] = self.run('return function(a) return ~a end', name = 'get neg')
-		self._ops['repr'] = self.run('return function(a) return tostring(a) end', name = 'get neg')
+		self._ops['neg'] = self.run(b'return function(a) return -a end', name = 'get neg')
+		self._ops['invert'] = self.run(b'return function(a) return ~a end', name = 'get neg')
+		self._ops['repr'] = self.run(b'return function(a) return tostring(a) end', name = 'get neg')
 		# TODO?: __close, __gc
 		# Skipped: len, getitem, setitem, delitem, because they have API calls which are used.
 
 		# Store a copy of table.remove and package.loaded, so they still work if the original value is replaced.
-		self._table_remove = self.run('return table.remove', name = 'get table.remove')
-		self._package_loaded = self.run('return package.loaded', name = 'get package.loaded')
+		self._table_remove = self.run(b'return table.remove', name = 'get table.remove')
+		self._package_loaded = self.run(b'return package.loaded', name = 'get package.loaded')
 
 		# Set up metatable for userdata objects. {{{
 		self._factory = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
@@ -208,23 +217,23 @@ class Lua(object): # {{{
 		for op in ops:
 			setattr(self, '_the_' + op, self._factory(globals()['_object_' + op]))
 			_library.lua_pushcclosure(self._state, getattr(self, '_the_' + op), 0)
-			_library.lua_setfield(self._state, -2, b'__' + makebytes(op))
+			_library.lua_setfield(self._state, -2, b'__' + op.encode('utf-8'))
 		_library.lua_setfield(self._state, LUA_REGISTRYINDEX, b'metatable')
 		# }}}
 
 		# Disable optional features that have not been requested. {{{
 		if not debug:
-			self.run('debug = nil package.loaded.debug = nil', name = 'disabling debug')
+			self.run(b'debug = nil package.loaded.debug = nil', name = 'disabling debug')
 		if not loadlib:
-			self.run('package.loadlib = nil', name = 'disabling loadlib')
+			self.run(b'package.loadlib = nil', name = 'disabling loadlib')
 		if not searchers:
-			self.run('package.searchers = {}', name = 'disabling searchers')
+			self.run(b'package.searchers = {}', name = 'disabling searchers')
 		if not doloadfile:
-			self.run('loadfile = nil dofile = nil', name = 'disabling loadfile and dofile')
+			self.run(b'loadfile = nil dofile = nil', name = 'disabling loadfile and dofile')
 		if not os:
-			self.run('os = {clock = os.clock, date = os.date, difftime = os.difftime, setlocale = os.setlocale, time = os.time} package.loaded.os = os', name = 'disabling some of os')
+			self.run(b'os = {clock = os.clock, date = os.date, difftime = os.difftime, setlocale = os.setlocale, time = os.time} package.loaded.os = os', name = 'disabling some of os')
 		if not io:
-			self.run('io = nil package.loaded.io = nil', name = 'disabling io')
+			self.run(b'io = nil package.loaded.io = nil', name = 'disabling io')
 		# }}}
 
 		# Add access to Python object constructors from Lua (unless disabled).
@@ -235,8 +244,8 @@ class Lua(object): # {{{
 	def run_file(self, script, keep_single = False): # {{{
 		_dprint('running lua file %s' % script, 1)
 		pos = _library.lua_gettop(self._state)
-		if _library.luaL_loadfilex(self._state, makebytes(script), None) != LUA_OK:
-			raise ValueError(makestr(_library.lua_tolstring(self._state, 1, None)))
+		if _library.luaL_loadfilex(self._state, script.encode('utf-8'), None) != LUA_OK:
+			raise ValueError(_library.lua_tolstring(self._state, 1, None).decode('utf-8'))
 		ret = _library.lua_pcallk(self._state, 0, LUA_MULTRET, None, 0, None)
 		if ret == 0:
 			size = _library.lua_gettop(self._state) - pos
@@ -249,24 +258,31 @@ class Lua(object): # {{{
 					ret = ret[0]
 			return ret
 		else:
-			ret = makestr(_library.lua_tolstring(self._state, 1, None))
+			ret = _library.lua_tolstring(self._state, 1, None).decode('utf-8')
 			_library.lua_settop(self._state, pos)
 			raise ValueError(ret)
 	# }}}
 
 	def run(self, script = None, var = None, value = None, name = 'python string', keep_single = False): # {{{
 		_dprint('running lua script %s with var %s' % (name, str(var)), 5)
+		assert script is None or isinstance(script, (bytes, str))
+		assert var is None or isinstance(var, str)
+		assert isinstance(name, str)
+		# For convenience, allow str scripts.
+		if isinstance(script, str):
+			script = script.encode('utf-8')
 		if var is not None:
 			_library.lua_rawgeti(self._state, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS)
 			self._push(value)
-			var = makebytes(var)
+			# Allow str identifiers for convenience, but convert them to bytes for Lua.
+			if isinstance(var, str):
+				var = var.encode('utf-8')
 			_library.lua_setfield(self._state, -2, var)
 			_library.lua_settop(self._state, -2)
 		if script is not None:
 			pos = _library.lua_gettop(self._state)
-			script = makebytes(script)
-			if _library.luaL_loadbufferx(self._state, script, len(script), name, None) != LUA_OK:
-				raise ValueError(makestr(_library.lua_tolstring(self._state, 1, None)))
+			if _library.luaL_loadbufferx(self._state, script, len(script), name.encode('utf-8'), None) != LUA_OK:
+				raise ValueError(_library.lua_tolstring(self._state, 1, None).decode('utf-8'))
 			ret = _library.lua_pcallk(self._state, 0, LUA_MULTRET, None, 0, None)
 			if ret == 0:
 				size = _library.lua_gettop(self._state) - pos
@@ -281,7 +297,7 @@ class Lua(object): # {{{
 			else:
 				ret = _library.lua_tolstring(self._state, -1, None)
 				_library.lua_settop(self._state, pos)
-				raise ValueError(makestr(ret))
+				raise ValueError(ret.decode('utf-8'))
 	# }}}
 
 	def module(self, name, value): # {{{
@@ -290,7 +306,10 @@ class Lua(object): # {{{
 			# module object must be a table, so convert the object to a table.
 			module = {}
 			for key in dir(value):
-				k = makebytes(key)
+				# Keys must be str in Python, but they need to be bytes for Lua.
+				assert isinstance(key, str)
+				k = key.encode('utf-8')
+
 				if k.startswith(b'_'):
 					if k.startswith(b'_lua'):
 						k = b'_' + k[4:]
@@ -300,7 +319,7 @@ class Lua(object): # {{{
 			value = module
 		self._push(self._package_loaded)
 		self._push_luatable(value)
-		n = makebytes(name)
+		n = name.encode('utf-8')
 		_library.lua_setfield(self._state, -2, n)
 		_library.lua_settop(self._state, -2)
 	# }}}
@@ -320,7 +339,7 @@ class Lua(object): # {{{
 				return int(ret)
 			return ret
 		elif type == LUA_TSTRING:
-			return makestr(_library.lua_tolstring(self._state, index, None))
+			return _library.lua_tolstring(self._state, index, None).decode('utf-8')
 		elif type == LUA_TTABLE:
 			_dprint('creating table', 1)
 			_library.lua_pushvalue(self._state, index)
@@ -347,8 +366,9 @@ class Lua(object): # {{{
 			_library.lua_pushboolean(self._state, obj)
 		elif isinstance(obj, int):
 			_library.lua_pushinteger(self._state, obj)
-		elif isinstance(obj, (bytes, str)):
-			obj = makebytes(obj)
+		elif isinstance(obj, str):
+			# A str is encoded as bytes in Lua; bytes is wrapped as an object.
+			obj = obj.encode('utf-8')
 			_library.lua_pushlstring(self._state, obj, len(obj))
 		elif isinstance(obj, float):
 			_library.lua_pushnumber(self._state, ctypes.c_double(obj))
@@ -537,9 +557,11 @@ def _object_index(state): # [] (rvalue) {{{
 	A = self._to_python(1)
 	B = self._to_python(2)
 	_dprint('trying to index %s[%s]' % (str(A), str(B)), 2)
-	if isinstance(B, (str, bytes)):
-		B = makebytes(B)
-		if b.startswith(B'_'):
+	if isinstance(B, str):
+		if B.startswith('_'):
+			B = '_lua' + B[1:]
+	elif isinstance(B, bytes):
+		if B.startswith(b'_'):
 			B = b'_lua' + B[1:]
 	try:
 		value = A[B]
@@ -654,8 +676,8 @@ class Function: # Using Lua functions from Python. {{{
 			self._lua._push(arg)
 		if _library.lua_pcallk(self._lua._state, len(args), LUA_MULTRET, None, 0, None) != LUA_OK:
 			msg = _library.lua_tolstring(self._lua._state, 1, None)
-			sys.stderr.write('Error from lua: ' + makestr(msg) + '\n')
-			raise ValueError('Error from lua: ' + makestr(msg))
+			sys.stderr.write('Error from lua: ' + msg.decode('utf-8') + '\n')
+			raise ValueError('Error from lua: ' + msg.decode('utf-8'))
 		size = _library.lua_gettop(self._lua._state) - pos
 		ret = [self._lua._to_python(-size + i) for i in range(size)]
 		if not keep_single:
@@ -717,7 +739,7 @@ class Table: # Using Lua tables from Python. {{{
 	def __getitem__(self, key): # {{{
 		_dprint('requesting item of lua table: %s' % key, 3)
 		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
-		self._lua._push(makebytes(key))
+		self._lua._push(key)
 		_library.lua_gettable(self._lua._state, -2)
 		ret = self._lua._to_python(-1)
 		_library.lua_settop(self._lua._state, -3)
@@ -729,7 +751,7 @@ class Table: # Using Lua tables from Python. {{{
 	def __setitem__(self, key, value): # {{{
 		_dprint('setting item of lua table: %s: %s' % (key, value), 3)
 		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
-		self._lua._push(makebytes(key))
+		self._lua._push(key)
 		self._lua._push(value)
 		_library.lua_settable(self._lua._state, -3)
 		_library.lua_settop(self._lua._state, -2)
@@ -747,7 +769,7 @@ class Table: # Using Lua tables from Python. {{{
 		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
 		_library.lua_pushnil(self._lua._state)
 		while _library.lua_next(self._lua._state, -2) != 0:
-			if makebytes(self._lua._to_python(-2)) == makebytes(key):
+			if self._lua._to_python(-2) == key:
 				_library.lua_settop(self._lua._state, -4)
 				return True
 			_library.lua_settop(self._lua._state, -2)

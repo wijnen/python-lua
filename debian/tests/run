@@ -1,0 +1,71 @@
+#!/bin/bash
+
+d="`mktemp -d`"
+cleanup() {
+	rm -rf "$d"
+}
+trap cleanup EXIT
+
+cat > "$d"/correct.txt <<EOF
+global "x" None
+file {a: 3, b: "bar"} {'a': 3, 'b': bar}
+1 + 2 = 3
+x = 15: 15
+new x = "foo": foo
+use str = "48": 48
+use bytes = "49": 49
+module foo = 12: 12
+table 1: 1
++ 8: 8
+-2 -2: -2
+* 15: 15
+/ .6: 0.6
+% 3: 3
+** 243: 243
+-1 -3: -3
+// 0: 0
+& 1: 1
+| 7: 7
+~ 6: 6
+~ -4: -4
+<< 96: 96
+>> 128: 128
+.. "35" 3 concat 5
+# 4: 4
+== False: False
+~= True: True
+< True: True
+> False: False
+<= True: True
+>= False: False
+[int] 3: 3
+[str] 25: 25
+[]= [4,7,42,2,33,10] [4, 7, 42, 2, 33, 10]
+5 foo
+() None + 5,"foo": None
+closing 12 None
+close 8 and 12 8
+str "abc" b'abc'
+code call 11: 11
+table len 3 3
+table [] 3: 3
+table {None,4,"boo",6,None,4,5} {1: 4, 2: boo, 3: 6, 5: 4, 6: 5}
+contain FFTT False False True True
+for ['1: 4', '2: boo', '3: 6', '4: 0', '5: 4', '6: 5']
+eq TFFT: True False False True
+dict {1: 4, 2: boo, 3: 6, 4: 0, 5: 4, 6: 5}
+list [4, 'boo', 6, 0, 4, 5]
+pop [4, 'boo', 6, 0, 5]
+pop ['boo', 6, 0, 5]
+del'd
+python list [1, 2, 3] [1, 2, 3]
+python dict {1: "foo", "bar": 42} {1: foo, 'bar': 42}
+python bytes from string = b'Hello!' b'Hello!'
+python bytes from table = b'AB' b'AB'
+python bytes from int = b'\x00\x00' b'\x00\x00'
+EOF
+
+cd "`dirname "$0"`"
+./test > "$d"/output.txt
+
+diff -u "$d"/output.txt "$d"/correct.txt

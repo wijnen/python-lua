@@ -7,4 +7,4 @@ export PYBUILD_NAME = lua
 
 override_dh_auto_clean:
 	dh_auto_clean
-	rm -rf src/lua.egg-info dist
+	rm -rf src/lua_wrapper.egg-info dist

@@ -55,8 +55,9 @@ At the time of this writing, when the module is imported it will load Lua
 version 5.4. This can be adjusted using the environment variable
 `PYTHON_LUA_VERSION`, which should be set to the version (`'5.4'` is the
 default). This means that a program which requires a specific Lua version
-should set this variable, even if it is 5.4, to make sure the correct version
-is loaded. Not doing so will allow the user to try different versions.
+should set this variable before importing the module, even if it is 5.4, to
+make sure the correct version is loaded. Not doing so will allow the user to
+try different versions.
 
 ```Python
 # Optional. If this is used, it must come before importing lua.
@@ -85,7 +86,10 @@ setting the corresponding constructor parameter to True. The features are:
 - io: enable the io library. This library allows arbitrary file access on the host system and should only be enabled for trusted Lua code.
 - os: enable all of the os module. Even when not enabled, `clock`, `date`, `difftime`, `setlocale` and `time` are still available. The rest of os allows running executables on the host system. This should only be enabled for trusted Lua code.
 
-Additionally, the 'python' module, which contains list and dict constructors, can be disabled by setting it to False. It is enabled by default.
+Additionally, the 'python' module, which contains list and dict constructors,
+can be disabled by setting it to False. It is enabled by default. Note that
+this setting does not create the `python` variable; it only allows lua code to
+`require` it.
 
 An example instance that allows access of the host filesystem through `io` is:
 

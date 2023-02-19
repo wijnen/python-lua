@@ -1,13 +1,21 @@
+python-lua (0.5-1) unstable; urgency=medium
+
+  * Differentiate between str and bytes and document this in the manual page.
+  * Add package tests.
+
+ -- Bas Wijnen <wijnen@debian.org>  Sun, 19 Feb 2023 12:56:47 +0100
+
 python-lua (0.4-1) unstable; urgency=medium
 
+  * Reupload to Debian. Closes: #1029942
   * New release.
-  * Updated standards version to 3.9.5 (no changes needed).
+  * Updated standards version to 4.6.2 (no changes needed).
   * Support (only) python3.
   * Update to Lua 5.4.
   * Update debhelper to compat level 10.
   * Store state in variable of correct type.
 
- -- Bas Wijnen <wijnen@debian.org>  Sat, 28 Jan 2023 17:24:37 +0100
+ -- Bas Wijnen <wijnen@debian.org>  Thu, 02 Feb 2023 19:47:43 +0100
 
 python-lua (0.3-1) unstable; urgency=low
 
