@@ -1,3 +1,10 @@
+python-lua (0.6-1) UNRELEASED; urgency=medium
+
+  * Fail to import if liblua is not found.
+  * Fix package build and add required build dependencies.
+
+ -- Bas Wijnen <wijnen@debian.org>  Mon, 20 Feb 2023 18:51:35 +0100
+
 python-lua (0.5-1) unstable; urgency=medium
 
   * Differentiate between str and bytes and document this in the manual page.

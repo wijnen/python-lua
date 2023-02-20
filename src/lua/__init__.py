@@ -108,15 +108,11 @@ def _dprint(text, level = 0):
 # }}}
 
 # Load shared library. {{{
-# Do not fail importing without a library; fail when using it. This helps to "pass" a basic import test when liblua is not installed.
 _libraryfilename = "liblua" + os.getenv('PYTHON_LUA_VERSION', '5.4') + ".so" # TODO: use .dll for Windows.
-try:
-	# Allow users (or the calling program) to choose their lua version.
-	_library = ctypes.CDLL(_libraryfilename)
-	if not hasattr(_library, 'lua_len'):
-		_library.lua_len = _library.lua_objlen
-except OSError:
-	print('Warning: %s cannot be loaded; this module will not be functional!' % _libraryfilename)
+# Allow users (or the calling program) to choose their lua version.
+_library = ctypes.CDLL(_libraryfilename)
+if not hasattr(_library, 'lua_len'):
+	_library.lua_len = _library.lua_objlen
 # }}}
 
 # Module for accessing some Python parts from Lua. This prepared as a "python" module unless disabled. {{{
@@ -160,19 +156,19 @@ class Lua(object): # {{{
 		_library.luaL_openlibs(self._state)
 		_library.lua_tolstring.restype = ctypes.c_char_p
 		_library.lua_tonumberx.restype = ctypes.c_double
-		_library.lua_touserdata.restype = ctypes.c_void_p
 		_library.lua_topointer.restype = ctypes.c_void_p
 		_library.lua_touserdata.restype = ctypes.c_void_p
 		_library.lua_tothread.restype = ctypes.c_void_p
 		_library.lua_tocfunction.restype = ctypes.c_void_p
 		_library.lua_newuserdatauv.restype = ctypes.c_void_p
+		_library.lua_len.restype = ctypes.c_longlong
 		# }}}
 
 		# Set attributes. {{{
 		self._objects = {}
 		# Store back "pointer" to self.
 		self._states[self._state.value] = self
-		self._push(self._state)
+		self._push(self._state.value)
 		_library.lua_setfield(self._state, LUA_REGISTRYINDEX, b'self')
 		# }}}
 
@@ -201,14 +197,15 @@ class Lua(object): # {{{
 			self._ops[name] = self.run(b'return function(a, b) return a %s b end' % op.encode('utf-8'), name = 'get %s' % name)
 		# Unary operators.
 		self._ops['neg'] = self.run(b'return function(a) return -a end', name = 'get neg')
-		self._ops['invert'] = self.run(b'return function(a) return ~a end', name = 'get neg')
-		self._ops['repr'] = self.run(b'return function(a) return tostring(a) end', name = 'get neg')
+		self._ops['invert'] = self.run(b'return function(a) return ~a end', name = 'get invert')
+		self._ops['repr'] = self.run(b'return function(a) return tostring(a) end', name = 'get repr')
 		# TODO?: __close, __gc
 		# Skipped: len, getitem, setitem, delitem, because they have API calls which are used.
 
 		# Store a copy of table.remove and package.loaded, so they still work if the original value is replaced.
 		self._table_remove = self.run(b'return table.remove', name = 'get table.remove')
 		self._package_loaded = self.run(b'return package.loaded', name = 'get package.loaded')
+		self._G = self.run(b'return _G', name = 'get _G')
 
 		# Set up metatable for userdata objects. {{{
 		self._factory = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p)
@@ -272,7 +269,7 @@ class Lua(object): # {{{
 		if isinstance(script, str):
 			script = script.encode('utf-8')
 		if var is not None:
-			_library.lua_rawgeti(self._state, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS)
+			_library.lua_rawgeti(self._state, LUA_REGISTRYINDEX, ctypes.c_longlong(LUA_RIDX_GLOBALS))
 			self._push(value)
 			# Allow str identifiers for convenience, but convert them to bytes for Lua.
 			if isinstance(var, str):
@@ -318,13 +315,18 @@ class Lua(object): # {{{
 				module[k] = getattr(value, key)
 			value = module
 		self._push(self._package_loaded)
+		_dprint('package loaded %s' % repr(self._package_loaded.dict(True)), 1)
 		self._push_luatable(value)
 		n = name.encode('utf-8')
+		#self._dump_lua_stack()
+		#self._dump_lua_registry()
+		_dprint('setting name to %s' % repr(n), 1)
 		_library.lua_setfield(self._state, -2, n)
+		_dprint('resetting top', 1)
 		_library.lua_settop(self._state, -2)
 	# }}}
 
-	def _to_python(self, index): # {{{
+	def _to_python(self, index, allow_unknown = False): # {{{
 		_dprint('creating python value from lua at %d' % index, 1)
 		type = _library.lua_type(self._state, index)
 		if type == LUA_TNIL:
@@ -354,6 +356,8 @@ class Lua(object): # {{{
 			return _library.lua_tothread(self._state, index)
 		elif _library.lua_iscfunction(self._state, index):
 			return _library.lua_tocfunction(self._state, index)
+		elif allow_unknown:
+			return '(Unknown type %x)' % type
 		else:
 			raise AssertionError('unexpected lua type %d' % type)
 	# }}}
@@ -365,7 +369,7 @@ class Lua(object): # {{{
 		elif isinstance(obj, bool):
 			_library.lua_pushboolean(self._state, obj)
 		elif isinstance(obj, int):
-			_library.lua_pushinteger(self._state, obj)
+			_library.lua_pushinteger(self._state, ctypes.c_longlong(obj))
 		elif isinstance(obj, str):
 			# A str is encoded as bytes in Lua; bytes is wrapped as an object.
 			obj = obj.encode('utf-8')
@@ -373,8 +377,8 @@ class Lua(object): # {{{
 		elif isinstance(obj, float):
 			_library.lua_pushnumber(self._state, ctypes.c_double(obj))
 		elif isinstance(obj, (Function, Table)):
-			_dprint('pushing table', 1)
-			_library.lua_rawgeti(self._state, LUA_REGISTRYINDEX, obj._id)
+			_dprint('pushing table %s %d %d' % (obj._id, self._state.value, LUA_REGISTRYINDEX), 1)
+			_library.lua_rawgeti(self._state, LUA_REGISTRYINDEX, ctypes.c_longlong(obj._id))
 		elif isinstance(obj, object):
 			id = _library.lua_newuserdatauv(self._state, 1, 1)
 			self._objects[id] = obj
@@ -390,21 +394,45 @@ class Lua(object): # {{{
 		'''Push a real lua table to the stack; not a userdata emulating a table. Table must be a list or dict'''
 		_dprint('pushing lua table', 1)
 		if isinstance(table, dict):
-			_library.lua_createtable(self._state, 0, len(table))
+			_library.lua_createtable(self._state, 0, len(table))	# Pushes new table on the stack.
 			for i in table:
 				self._push(i)
 				self._push(table[i])
-				_library.lua_settable(self._state, -3)
+				_library.lua_settable(self._state, -3)		# Pops key and value from the stack.
 		else:
-			_library.lua_createtable(self._state, len(table), 0)
-			for i in range(len(table)):
+			_library.lua_createtable(self._state, len(table), 0)	# Pushes new table on the stack.
+			for i, v in enumerate(table):
 				self._push(table[i])
-				_library.lua_rawseti(self._state, -2, i + 1)
+				_library.lua_rawseti(self._state, -2, ctypes.c_longlong(i + 1))	# Pops the value from the stack.
 		_dprint('done pushing lua table', 1)
 	# }}}
 
 	def make_table(self, data = ()): # {{{
 		return Table(self, data)
+	# }}}
+
+	def _dump_lua_stack(self): # {{{ Dump lua stack to stderr.
+		'Dump the lua stack to stderr'
+		num = _library.lua_gettop(self._state)
+		print('Current Lua Stack:', file = sys.stderr)
+		for i in range(num):
+			value = self._to_python(i + 1, True)
+			print('   %d\t%s\t%s' % (i + 1, type(value), repr(value)), file = sys.stderr)
+		print('Top Of Stack', file = sys.stderr)
+	# }}}
+
+	def _dump_lua_registry(self): # {{{ Dump lua registry to stderr.
+		'Dump the lua registry to stderr'
+		self._push(self._G)
+		_library.lua_pushnil(self._state)
+		print('Current Lua Registry:', file = sys.stderr)
+		while _library.lua_next(self._state, -2) != 0:
+			key = self._to_python(-2, True)
+			value = self._to_python(-1, True)
+			print('\t%s\t%s\t%s' % (repr(key), type(value), repr(value)), file = sys.stderr)
+			_library.lua_settop(self._state, -2)
+		print('End of Registry:', file = sys.stderr)
+		_library.lua_settop(self._state, -2)
 	# }}}
 # }}}
 
@@ -671,7 +699,7 @@ class Function: # Using Lua functions from Python. {{{
 			keep_single = False
 		assert len(kwargs) == 0
 		pos = _library.lua_gettop(self._lua._state)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		for arg in args:
 			self._lua._push(arg)
 		if _library.lua_pcallk(self._lua._state, len(args), LUA_MULTRET, None, 0, None) != LUA_OK:
@@ -690,7 +718,7 @@ class Function: # Using Lua functions from Python. {{{
 	# }}}
 
 	def __del__(self): # {{{
-		_dprint('destroying lua function', 1)
+		_dprint('destroying lua function %s' % self._id, 1)
 		_library.luaL_unref(self._lua._state, LUA_REGISTRYINDEX, self._id)
 	# }}}
 
@@ -715,7 +743,7 @@ class Table: # Using Lua tables from Python. {{{
 
 	def __len__(self): # {{{
 		_dprint('requesting length of lua table', 3)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		_library.lua_len(self._lua._state, -1)
 		ret = self._lua._to_python(-1)
 		_library.lua_settop(self._lua._state, -3)
@@ -724,13 +752,13 @@ class Table: # Using Lua tables from Python. {{{
 
 	def __iadd__(self, other): # {{{
 		_dprint('adding objects to lua table', 3)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		_library.lua_len(self._lua._state, -1)
 		length = self._lua._to_python(-1)
 		_library.lua_settop(self._lua._state, -2)
 		for item in other:
 			self._lua._push(item)
-			_library.lua_seti(self._lua._state, -2, length + 1)
+			_library.lua_seti(self._lua._state, -2, ctypes.c_longlong(length + 1))
 			length += 1
 		_library.lua_settop(self._lua._state, -2)
 		return self
@@ -738,7 +766,7 @@ class Table: # Using Lua tables from Python. {{{
 
 	def __getitem__(self, key): # {{{
 		_dprint('requesting item of lua table: %s' % key, 3)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		self._lua._push(key)
 		_library.lua_gettable(self._lua._state, -2)
 		ret = self._lua._to_python(-1)
@@ -750,7 +778,7 @@ class Table: # Using Lua tables from Python. {{{
 
 	def __setitem__(self, key, value): # {{{
 		_dprint('setting item of lua table: %s: %s' % (key, value), 3)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		self._lua._push(key)
 		self._lua._push(value)
 		_library.lua_settable(self._lua._state, -3)
@@ -766,7 +794,7 @@ class Table: # Using Lua tables from Python. {{{
 
 	def __contains__(self, key): # {{{
 		_dprint('checking if %s is in lua table' % key, 3)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		_library.lua_pushnil(self._lua._state)
 		while _library.lua_next(self._lua._state, -2) != 0:
 			if self._lua._to_python(-2) == key:
@@ -779,7 +807,7 @@ class Table: # Using Lua tables from Python. {{{
 
 	def __iter__(self): # {{{
 		_dprint('iterating over lua table', 3)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		_library.lua_pushnil(self._lua._state)
 		while _library.lua_next(self._lua._state, -2) != 0:
 			ret = self._lua._to_python(-2)
@@ -788,15 +816,15 @@ class Table: # Using Lua tables from Python. {{{
 			try:
 				_library.lua_settop(self._lua._state, -2)
 				yield ret
-				_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
-				_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ref)
+				_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
+				_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(ref))
 			finally:
 				_library.luaL_unref(self._lua._state, LUA_REGISTRYINDEX, ref)
 		_library.lua_settop(self._lua._state, -2)
 	# }}}
 
 	def __del__(self): # {{{
-		_dprint('destroying lua table', 1)
+		_dprint('destroying lua table %s' % self._id, 1)
 		_library.luaL_unref(self._lua._state, LUA_REGISTRYINDEX, self._id)
 	# }}}
 
@@ -812,14 +840,14 @@ class Table: # Using Lua tables from Python. {{{
 		return self._lua._ops['le'](other, self)
 	# }}}
 
-	def dict(self): # {{{
+	def dict(self, allow_unknown = False): # {{{
 		'Get a copy of the table as a dict'
-		_dprint('get dict from lua table', 1)
+		_dprint('get dict from lua table %s' % self._id, 1)
 		ret = {}
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		_library.lua_pushnil(self._lua._state)
 		while _library.lua_next(self._lua._state, -2) != 0:
-			ret[self._lua._to_python(-2)] = self._lua._to_python(-1)
+			ret[self._lua._to_python(-2, allow_unknown)] = self._lua._to_python(-1, allow_unknown)
 			_library.lua_settop(self._lua._state, -2)
 		_library.lua_settop(self._lua._state, -2)
 		return ret
@@ -827,14 +855,14 @@ class Table: # Using Lua tables from Python. {{{
 
 	def list(self): # {{{
 		'Get a copy of the table, which must be a sequence, as a list. note that table[1] becomes list[0].'
-		_dprint('get list from lua table', 1)
-		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, self._id)
+		_dprint('get list from lua table %s' % self._id, 1)
+		_library.lua_rawgeti(self._lua._state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
 		_library.lua_len(self._lua._state, -1)
 		length = self._lua._to_python(-1)
 		_library.lua_settop(self._lua._state, -2)
 		ret = [None] * length
 		for i in range(1, length + 1):
-			_library.lua_rawgeti(self._lua._state, -1, i)
+			_library.lua_rawgeti(self._lua._state, -1, ctypes.c_longlong(i))
 			ret[i - 1] = self._lua._to_python(-1)
 			_library.lua_settop(self._lua._state, -2)
 		_library.lua_settop(self._lua._state, -2)
