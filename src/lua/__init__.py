@@ -629,7 +629,7 @@ def _object_call(state): # () {{{
 	args = [self._to_python(i + 2) for i in range(num)]
 	# Don't bother the user with two self arguments.
 	if isinstance(obj, types.MethodType):
-		assert obj.im_self is args[0]
+		assert obj.__self__ is args[0]
 		args = args[1:]
 	try:
 		ret = obj(*args)
