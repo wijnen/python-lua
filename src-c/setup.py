@@ -4,13 +4,17 @@ from setuptools import setup, Extension
 
 module = Extension('lua',
 	sources = [
-		'module.cc',
+		'lua.c',
+		'function.c',
+		'table.c',
 	],
 	depends = [
+		'module.h',
 		'setup.py',
 	],
-	language = 'c++',
-	extra_compile_args = ['-std=c++20', '-I/usr/include/lua5.4', '-llua5.4'],
+	language = 'c',
+	libraries = ['lua5.4'],
+	extra_compile_args = ['-I/usr/include/lua5.4'],
 )
 
 setup(name = 'lua',

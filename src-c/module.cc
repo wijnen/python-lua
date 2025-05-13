@@ -223,6 +223,7 @@ public:
 private:
 	// Context in which this object is defined.
 	Lua *lua;
+	lua_Integer iter_ref;
 
 	// Python-accessible methods.
 	static PyObject *len_method(Table *self, PyObject *args);
@@ -238,8 +239,11 @@ private:
 	static PyObject *dict_method(Table *self, PyObject *args);
 	static PyObject *list_method(Table *self, PyObject *args);
 	static PyObject *pop_method(Table *self, PyObject *args);
+	static PyObject *next_method(Table *self, PyObject *args);
 
 	friend class Lua;
+
+	void clear_iter();
 }; // }}}
 
 // Module registration. {{{
@@ -329,19 +333,20 @@ std::map <char const *, char const *> const Lua::lua2python = {
 	std::make_pair("__div", "__truediv__"),
 	std::make_pair("__mod", "__mod__"),
 	std::make_pair("__pow", "__pow__"),
-	std::make_pair("__unm", "__neg__"),
 	std::make_pair("__idiv", "__floordiv__"),
 	std::make_pair("__band", "__and__"),
 	std::make_pair("__bor", "__or__"),
 	std::make_pair("__bxor", "__xor__"),
-	std::make_pair("__bnot", "__invert__"),
 	std::make_pair("__shl", "__lshift__"),
 	std::make_pair("__shr", "__rshift__"),
 	std::make_pair("__concat", "__matmul__"),
-	std::make_pair("__len", "__len__"),
 	std::make_pair("__eq", "__eq__"),
 	std::make_pair("__lt", "__lt__"),
 	std::make_pair("__le", "__le__"),
+
+	std::make_pair("__unm", "__neg__"),
+	std::make_pair("__bnot", "__invert__"),
+	std::make_pair("__len", "__len__"),
 	std::make_pair("__index", "__getitem__"),
 	std::make_pair("__newindex", "__setitem__"),
 	std::make_pair("__call", "__call__"),
@@ -492,7 +497,7 @@ PyObject *Lua::run_code(int pos, bool keep_single) { // {{{
 PyObject *Lua::run(std::string const &cmd, std::string const &description, bool keep_single) { // {{{
 	int pos = lua_gettop(state);
 	if (luaL_loadbufferx(state, cmd.data(), cmd.size(), description.c_str(), nullptr) != LUA_OK) {
-		PyErr_SetString(PyExc_ValueError, lua_tolstring(state, 1, nullptr));
+		PyErr_SetString(PyExc_ValueError, lua_tostring(state, -1));
 		return nullptr;
 	}
 	return run_code(pos, keep_single);
@@ -502,7 +507,7 @@ PyObject *Lua::run(std::string const &cmd, std::string const &description, bool 
 PyObject *Lua::run_file(std::string const &filename, std::string const &description, bool keep_single) { // {{{
 	int pos = lua_gettop(state);
 	if (luaL_loadfilex(state, filename.c_str(), nullptr) != LUA_OK) {
-		PyErr_SetString(PyExc_ValueError, lua_tolstring(state, 1, nullptr));
+		PyErr_SetString(PyExc_ValueError, lua_tostring(state, -1));
 		return nullptr;
 	}
 	return run_code(pos, keep_single);
@@ -833,6 +838,7 @@ PyObject *Table::create(Lua *context) { // {{{
 		return nullptr;
 	self->lua = context;
 	Py_INCREF(self->lua);
+	self->iter_ref = LUA_NOREF;
 	self->id = luaL_ref(self->lua->state, LUA_REGISTRYINDEX);
 	for (auto p: context->lua2python)
 		PyObject_SetAttrString(reinterpret_cast <PyObject *>(self), p.second, context->ops[p.first]);
@@ -847,33 +853,148 @@ void Table::dealloc(Table *self) { // {{{
 } // }}}
 
 PyObject *Table::iadd_method(Table *self, PyObject *args) { // {{{
-	// TODO
-	Py_RETURN_NONE;
+	PyObject *iterator;
+	if (!PyArg_ParseTuple(args, "O", &iterator))	// borrowed reference.
+		return nullptr;
+	if (!PyIter_Check(iterator)) {
+		PyErr_SetString(PyExc_TypeError, "argument must be iterable");
+		return nullptr;
+	}
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
+	lua_len(self->lua->state, -1);	// Length pushed.
+	Py_ssize_t length = lua_tointeger(self->lua->state, -1);
+	lua_pop(self->lua->state, 1);	// Length popped.
+	PyObject *item;
+	while ((item = PyIter_Next(iterator))) {
+		self->lua->push(item);
+		lua_seti(self->lua->state, -2, length + 1);
+		length += 1;
+		Py_DECREF(item);
+	}
+	Py_DECREF(iterator);
+	lua_pop(self->lua->state, 1);
+	return reinterpret_cast <PyObject *>(self);
 } // }}}
 
 PyObject *Table::getitem_method(Table *self, PyObject *args) { // {{{
-	// TODO
-	Py_RETURN_NONE;
+	PyObject *key;
+	if (!PyArg_ParseTuple(args, "O", &key))	// borrowed reference.
+		return nullptr;
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
+	self->lua->push(key);	// Key pushed.
+	lua_gettable(self->lua->state, -2);	// Key replaced by value.
+	PyObject *ret = self->lua->to_python(-1);
+	lua_pop(self->lua->state, 2);
+	if (ret == Py_None) {
+		PyErr_Format(PyExc_IndexError, "Key %s does not exist in Lua table", PyObject_Str(key));
+		Py_DECREF(ret);
+		return nullptr;
+	}
+	return ret;
 } // }}}
 
 PyObject *Table::setitem_method(Table *self, PyObject *args) { // {{{
-	// TODO
+	PyObject *key;
+	PyObject *value;
+	if (!PyArg_ParseTuple(args, "OO", &key, &value))	// borrowed references.
+		return nullptr;
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
+	self->lua->push(key);
+	self->lua->push(value);
+	lua_settable(self->lua->state, -3);	// Pops key and value from stack
+	lua_pop(self->lua->state, 1);
+	Py_DECREF(key);
+	Py_DECREF(value);
 	Py_RETURN_NONE;
 } // }}}
 
 PyObject *Table::delitem_method(Table *self, PyObject *args) { // {{{
-	// TODO
+	PyObject *key;
+	if (!PyArg_ParseTuple(args, "O", &key))	// borrowed reference.
+		return nullptr;
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
+	self->lua->push(key);	// Key pushed.
+	// Raise IndexError if key doesn't exist: use getitem.
+	self->lua->push(key);	// Key pushed.
+	lua_gettable(self->lua->state, -2);	// Key replaced by value.
+	if (lua_isnil(self->lua->state, -1)) {
+		// Key did not exist in table.
+		PyErr_Format(PyExc_IndexError, "Key %s does not exist in Lua table", PyObject_Str(key));
+		lua_pop(self->lua->state, 2);
+		return nullptr;
+	}
+	lua_pop(self->lua->state, 1);	// Old value popped.
+	self->lua->push(key);	// Key pushed.
+	lua_pushnil(self->lua->state);	// nil pushed.
+	lua_settable(self->lua->state, -3);	// Pops key and value from stack
 	Py_RETURN_NONE;
 } // }}}
 
 PyObject *Table::contains_method(Table *self, PyObject *args) { // {{{
-	// TODO
-	Py_RETURN_NONE;
+	// Check if the argument exists in the table as a value (not a key).
+	PyObject *value;
+	if (!PyArg_ParseTuple(args, "O", &value))	// borrowed reference.
+		return nullptr;
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
+	lua_pushnil(self->lua->state);
+	while (lua_next(self->lua->state, -2) != 0) {
+		PyObject *candidate = self->lua->to_python(-1);
+		if (PyObject_RichCompareBool(value, candidate, Py_EQ)) {
+			lua_pop(self->lua->state, 3);
+			Py_DECREF(candidate);
+			Py_RETURN_TRUE;
+		}
+		Py_DECREF(candidate);
+		lua_pop(self->lua->state, 1);
+	}
+	lua_pop(self->lua->state, 2);
+	Py_RETURN_FALSE;
+} // }}}
+
+void Table::clear_iter() { // {{{
+	if (iter_ref != LUA_REFNIL)
+		luaL_unref(lua->state, LUA_REGISTRYINDEX, iter_ref);
+	iter_ref = LUA_NOREF;
 } // }}}
 
 PyObject *Table::iter_method(Table *self, PyObject *args) { // {{{
-	// TODO
-	Py_RETURN_NONE;
+	// Destroy pending iteration, if any.
+	if (self->iter_ref != LUA_NOREF)
+		self->clear_iter();
+	self->iter_ref = LUA_REFNIL;
+	// TODO: the iterator should really be a copy of the object, to allow multiple iterations simultaneously.
+	Py_INCREF(self);
+	return reinterpret_cast <PyObject *>(self);
+} // }}}
+
+PyObject *Table::next_method(Table *self, PyObject *args) { // {{{
+	if (!PyArg_ParseTuple(args, ""))
+		return nullptr;
+	if (self->iter_ref == LUA_NOREF) {
+		PyErr_SetString(PyExc_ValueError, "next called on invalid iterator");
+		return nullptr;
+	}
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->iter_ref);	// previous key pushed.
+	if (lua_next(self->lua->state, -2) == 0) {
+		self->clear_iter();
+		lua_pop(self->lua->state, 1);
+		PyErr_SetNone(PyExc_StopIteration);
+		return nullptr;
+	}
+	PyObject *ret = self->lua->to_python(-2);
+	lua_pop(self->lua->state, 1);	// Pop value.
+	if (self->iter_ref == LUA_REFNIL) {
+		luaL_ref(self->lua->state, LUA_REGISTRYINDEX);	// Pop and store key.
+		lua_pop(self->lua->state, 1);	// Pop table.
+	}
+	else {
+		lua_pushinteger(self->lua->state, self->iter_ref);	// Push ref as key.
+		lua_pushvalue(self->lua->state, -2);	// Push table key as value. Stack is now [table, key, ref, key]
+		lua_settable(self->lua->state, LUA_REGISTRYINDEX);	// Store key in registry, pop ref and key.
+		lua_pop(self->lua->state, 2);	// Pop table and key.
+	}
+	return ret;
 } // }}}
 
 PyObject *Table::ne_method(Table *self, PyObject *args) { // {{{
@@ -918,13 +1039,42 @@ PyObject *Table::ge_method(Table *self, PyObject *args) { // {{{
 } // }}}
 
 PyObject *Table::dict_method(Table *self, PyObject *args) { // {{{
-	// TODO
-	Py_RETURN_NONE;
+	// Get a copy of the table as a dict
+	PyObject *ret = PyDict_New();
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	lua_pushnil(self->lua->state);
+	while (lua_next(self->lua->state, -2) != 0) {
+		PyObject *key = self->lua->to_python(-2);
+		PyObject *value = self->lua->to_python(-1);
+		bool fail = PyDict_SetItem(ret, key, value) < 0;
+		Py_DECREF(key);
+		Py_DECREF(value);
+		if (fail) {
+			Py_DECREF(ret);
+			return nullptr;
+		}
+		lua_pop(self->lua->state, 1);
+	}
+	lua_pop(self->lua->state, 1);
+	return ret;
 } // }}}
 
 PyObject *Table::list_method(Table *self, PyObject *args) { // {{{
-	// TODO
-	Py_RETURN_NONE;
+	// Get a copy of (the sequence elements of) the table, as a list. note that table[1] becomes list[0].
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	lua_len(self->lua->state, -1);
+	Py_ssize_t length = lua_tointeger(self->lua->state, -1);
+	lua_pop(self->lua->state, 1);
+	PyObject *ret = PyList_New(length);
+	for (Py_ssize_t i = 1; i <= length; ++i) {
+		lua_rawgeti(self->lua->state, -1, i);
+		PyObject *value = self->lua->to_python(-1);
+		PyList_SET_ITEM(ret, i - 1, value);
+		Py_DECREF(value);
+		lua_pop(self->lua->state, 1);
+	}
+	lua_pop(self->lua->state, 1);
+	return ret;
 } // }}}
 
 PyObject *Table::pop_method(Table *self, PyObject *args) { // {{{
@@ -934,9 +1084,7 @@ PyObject *Table::pop_method(Table *self, PyObject *args) { // {{{
 	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
 	if (index < 0) {
 		lua_len(self->lua->state, -1);
-		PyObject *len = self->lua->to_python(-1);
-		index += PyLong_AsSsize_t(len);
-		Py_DECREF(len);
+		index += lua_tointeger(self->lua->state, -1);
 		lua_pop(self->lua->state, 1);
 	}
 	self->lua->push(self->lua->table_remove);
@@ -975,108 +1123,6 @@ class Table: # Using Lua tables from Python. {{{
 		self._id = luaL_ref(lua->state, LUA_REGISTRYINDEX)
 		for name, impl in self._lua._ops.items():
 			setattr(self, '__' + name + '__', impl)
-	# }}}
-
-	def __iadd__(self, other): # {{{
-		_dprint('adding objects to lua table', 3)
-		lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-		lua_len(lua->state, -1)
-		length = self._lua._to_python(-1)
-		lua_settop(lua->state, -2)
-		for item in other:
-			self._lua._push(item)
-			lua_seti(lua->state, -2, ctypes.c_longlong(length + 1))
-			length += 1
-		lua_settop(lua->state, -2)
-		return self
-	# }}}
-
-	def __getitem__(self, key): # {{{
-		_dprint('requesting item of lua table: %s' % key, 3)
-		lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-		self._lua._push(key)
-		lua_gettable(lua->state, -2)
-		ret = self._lua._to_python(-1)
-		lua_settop(lua->state, -3)
-		if ret is None:
-			raise IndexError('Key %s does not exist in Lua table' % key)
-		return ret
-	# }}}
-
-	def __setitem__(self, key, value): # {{{
-		_dprint('setting item of lua table: %s: %s' % (key, value), 3)
-		lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-		self._lua._push(key)
-		self._lua._push(value)
-		lua_settable(lua->state, -3)
-		lua_settop(lua->state, -2)
-	# }}}
-
-	def __delitem__(self, key): # {{{
-		_dprint('deleting item of lua table: %s' % key, 3)
-		# Raise IndexError if key doesn't exist: use getitem.
-		self[key]
-		self[key] = None
-	# }}}
-
-	def __contains__(self, key): # {{{
-		_dprint('checking if %s is in lua table' % key, 3)
-		lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-		lua_pushnil(lua->state)
-		while lua_next(lua->state, -2) != 0:
-			if self._lua._to_python(-2) == key:
-				lua_settop(lua->state, -4)
-				return True
-			lua_settop(lua->state, -2)
-		lua_settop(lua->state, -2)
-		return False
-	# }}}
-
-	def __iter__(self): # {{{
-		_dprint('iterating over lua table', 3)
-		lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-		lua_pushnil(lua->state)
-		while lua_next(lua->state, -2) != 0:
-			ret = self._lua._to_python(-2)
-			lua_settop(lua->state, -2)
-			ref = luaL_ref(lua->state, LUA_REGISTRYINDEX)
-			try:
-				lua_settop(lua->state, -2)
-				yield ret
-				lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-				lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(ref))
-			finally:
-				luaL_unref(lua->state, LUA_REGISTRYINDEX, ref)
-		lua_settop(lua->state, -2)
-	# }}}
-
-	def dict(self, allow_unknown = False): # {{{
-		'Get a copy of the table as a dict'
-		_dprint('get dict from lua table %s' % self._id, 1)
-		ret = {}
-		lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-		lua_pushnil(lua->state)
-		while lua_next(lua->state, -2) != 0:
-			ret[self._lua._to_python(-2, allow_unknown)] = self._lua._to_python(-1, allow_unknown)
-			lua_settop(lua->state, -2)
-		lua_settop(lua->state, -2)
-		return ret
-	# }}}
-
-	def list(self): # {{{
-		'Get a copy of the table, which must be a sequence, as a list. note that table[1] becomes list[0].'
-		_dprint('get list from lua table %s' % self._id, 1)
-		lua_rawgeti(lua->state, LUA_REGISTRYINDEX, ctypes.c_longlong(self._id))
-		lua_len(lua->state, -1)
-		length = self._lua._to_python(-1)
-		lua_settop(lua->state, -2)
-		ret = [None] * length
-		for i in range(1, length + 1):
-			lua_rawgeti(lua->state, -1, ctypes.c_longlong(i))
-			ret[i - 1] = self._lua._to_python(-1)
-			lua_settop(lua->state, -2)
-		lua_settop(lua->state, -2)
-		return ret
 	# }}}
 
 # }}}
