@@ -58,9 +58,6 @@ module = {
 code.module('baz', module)
 print('module foo = 12:', code.run(b'baz = require "baz" return baz.foo'))
 
-# make_table
-print('table 1:', code.make_table([1, 2, 3])[1])
-
 # metatable:
 class Obj:
 	def __init__(self, v):
