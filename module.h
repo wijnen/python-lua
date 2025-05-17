@@ -124,7 +124,6 @@ enum Operator { // {{{
 	LEN,
 	GETITEM,
 	SETITEM,
-	CALL,
 
 	// Not a typical operator, but useful to define as such.
 	STR,
@@ -157,6 +156,14 @@ typedef struct Lua { // {{{
 	// Values are Function objects.
 	PyObject *lua_operator[NUM_OPERATORS];
 } Lua; // }}}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+void lua_load_module(Lua *self, const char *name, PyObject *dict);
+#ifdef __cplusplus
+}
+#endif
 
 // Load variable from Lua stack into Python.
 PyObject *Lua_to_python(Lua *self, int index);
@@ -205,5 +212,6 @@ Py_ssize_t Table_len(Table *self);
 PyObject *Table_getitem(Table *self, PyObject *key);
 int Table_setitem(Table *self, PyObject *key, PyObject *value);
 extern PyMethodDef Table_methods[];
+PyObject *table_list_method(Table *self, PyObject *args);
 
 // vim: set foldmethod=marker :

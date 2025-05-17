@@ -542,6 +542,12 @@ void Lua::load_module(std::string const &name, PyObject *dict) { // {{{
 	lua_setfield(state, -2, name.c_str());
 	lua_settop(state, -2);
 } // }}}
+extern "C" {
+	void lua_load_module(Lua *self, const char *name, PyObject *dict)
+	{
+		self->load_module(name, dict);
+	}
+}
 
 // load variable from lua stack into python.
 PyObject *Lua::to_python(int index) { // {{{
@@ -1106,26 +1112,5 @@ PyObject *Table::len_method(Table *self, PyObject *args) { // {{{
 	return ret;
 } // }}}
 // }}}
-
-/*
-class Table: # Using Lua tables from Python. {{{
-	'''Python interface to access a lua table.
-	The table is owned by lua; this class only provides a view to it.'''
-
-	def __init__(self, lua, table = None): # {{{
-		'''Create Python handle for Lua table.
-		If the table is not given as an arugment, it must be pushed to
-		the stack before calling this.'''
-		_dprint('creating lua table', 1)
-		self._lua = lua
-		if table is not None:
-			self._lua._push_luatable(table)
-		self._id = luaL_ref(lua->state, LUA_REGISTRYINDEX)
-		for name, impl in self._lua._ops.items():
-			setattr(self, '__' + name + '__', impl)
-	# }}}
-
-# }}}
-*/
 
 // vim: set foldmethod=marker :

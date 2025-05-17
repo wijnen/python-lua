@@ -40,7 +40,7 @@ struct OperatorMap operators[NUM_OPERATORS] = { // {{{
 	{ "__len__", "__len", NULL },
 	{ "__getitem__", "__index", NULL },
 	{ "__setitem__", "__newindex", NULL },
-	{ "__call__", "__call", NULL },
+	//{ "__call__", "__call", NULL },
 	{ "__repr__", "__totring", NULL }
 }; // }}}
 
@@ -135,6 +135,59 @@ static void push_luatable(Lua *self, PyObject *obj) { // {{{
 	}
 } // }}}
 
+static PyObject *construct_bytes_impl(PyObject * /*self*/, PyObject *args) // {{{
+{
+	// Implementation of python.bytes()
+	PyObject *arg;
+	if (!PyArg_ParseTuple(args, "O", &arg))
+		return NULL;
+	if (PyObject_IsInstance(arg, (PyObject*)table_type)) {
+		PyObject *list = table_list_method((Table *)arg, NULL);
+		return PyBytes_FromObject(list);
+	}
+	if (PyUnicode_Check(arg))
+		return PyUnicode_AsUTF8String(arg);
+	return PyBytes_FromObject(arg);
+} // }}}
+static PyMethodDef construct_bytes_method = {
+	"constuct_bytes",
+	(PyCFunction)construct_bytes_impl,
+	METH_VARARGS,
+	"Convert argument to bytes"
+};
+
+static int call_method(lua_State *state)
+{
+	lua_getfield(state, LUA_REGISTRYINDEX, "self");
+	Lua *lua = (Lua *)lua_touserdata(state, -1);
+	lua_pop(state, 1);
+	PyObject *target = Lua_to_python(lua, 1);
+	if (!PyCallable_Check(target)) {
+		fprintf(stderr, "Called object is not callable: ");
+		PyObject_Print(target, stderr, 0);
+		fprintf(stderr, "\n");
+		lua_settop(state, 0);
+		return 0;
+	}
+	// Create arguments tuple
+	int nargs = lua_gettop(state);
+	PyObject *args = PyTuple_New(nargs - 1);
+	for (int i = 2; i <= nargs; ++i) {
+		PyObject *arg = Lua_to_python(lua, i);	// New reference.
+		// fill tuple
+		PyTuple_SET_ITEM(args, i - 2, arg);	// Steals reference to arg.
+	}
+
+	// Call function.
+	PyObject *ret = PyObject_CallObject(target, args);
+	Py_DECREF(args);
+	if (ret == NULL)
+		return 0;
+	Lua_push(lua, ret);	// Unpack returned sequence?
+	Py_DECREF(ret);
+	return 1;
+}
+
 // Python class Lua __new__ function.
 static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords) { // {{{
 	Lua *self = (Lua *)type->tp_alloc(type, 0);
@@ -210,6 +263,10 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 
 	// Skipped: len, getitem, setitem, delitem, because they have API calls which are used.
 
+	// Set call metamethod.
+	lua_pushcclosure(self->state, call_method, 0);
+	lua_setfield(self->state, -2, "__call");
+
 	// Set gc metamethod. This is not passed through to Python, but instead cleans up the PyObject * reference.
 	lua_pushcclosure(self->state, gc, 0);
 	lua_setfield(self->state, -2, "__gc");
@@ -254,29 +311,23 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 	// }}}
 
 	/* Add access to Python object constructors from Lua (unless disabled).
-	   TODO when Table interface has been implemented.
+	   TODO when Table interface has been implemented.*/
 	if (python_module) {
-# Lua module for accessing some Python parts from Lua. This is prepared as a "python" module unless disabled. {{{
-	def construct_bytes(arg):
-	'Implementation of python.bytes()'
-	if isinstance(arg, Table):
-		return bytes(arg.list())
-	if isinstance(arg, str):
-		return arg.encode('utf-8')
-	return bytes(arg)
+		// Lua module for accessing some Python parts from Lua. This is prepared as a "python" module unless disabled. {{{
+		PyObject *table_list = PyCMethod_New(&Table_methods[0],
+				NULL, NULL, NULL);
+		PyObject *table_dict = PyCMethod_New(&Table_methods[1],
+				NULL, NULL, NULL);
+		PyObject *construct_bytes
+			= PyCMethod_New(&construct_bytes_method,
+					NULL, NULL, NULL);
 
-	python = {
-	'list': lambda table: table.list(),
-	'dict': lambda table: table.dict(),
-	'bytes': construct_bytes
+		lua_load_module(self, "python", Py_BuildValue("{sO sO sO}",
+				"list", table_list,
+				"dict", table_dict,
+				"bytes", construct_bytes));
+		// }}}
 	}
-# }}}
-
-		create_lua_module("python", Py_BuildValue("{sO sO sO}",
-					"list", table.list,
-					"dict", table.dict,
-					"bytes", construct_bytes));
-	}*/
 
 	return (PyObject *)self;
 } // }}}
@@ -298,6 +349,10 @@ static void set(Lua *self, char const *name, PyObject *value) { // {{{
 // run code after having loaded the buffer (internal use only).
 static PyObject *run_code(Lua *self, int pos, bool keep_single) { // {{{
 	lua_call(self->state, 0, LUA_MULTRET);
+	if (PyErr_Occurred()) {
+		lua_settop(self->state, 0);
+		return NULL;
+	}
 	int size = lua_gettop(self->state) - pos;
 	PyObject *ret;
 	if (keep_single || size > 1) {
@@ -334,7 +389,7 @@ static PyObject *do_run_file(Lua *self, char const *filename, char const *descri
 } // }}}
 
 // load module into lua.
-static void lua_load_module(Lua *self, char const *name, PyObject *dict) { // {{{
+void lua_load_module(Lua *self, char const *name, PyObject *dict) { // {{{
 	if (!PyDict_Check(dict)) {
 		PyObject *new_dict = PyDict_New();	// new reference
 		PyObject *dir = PyObject_Dir(dict);	// new reference
@@ -494,7 +549,7 @@ static PyObject *Lua_module(Lua *self, PyObject *args) { // {{{
 
 // }}}
 
-void Lua_dump_stack(Lua *self) {
+void Lua_dump_stack(Lua *self) { // {{{
 	int n = lua_gettop(self->state);
 	fprintf(stderr, "***** Lua stack dump *****\n");
 	for (int i = 1; i <= n; ++i) {
@@ -505,8 +560,9 @@ void Lua_dump_stack(Lua *self) {
 		fprintf(stderr, "\n");
 	}
 	fprintf(stderr, "**************************\n");
-}
-// Module registration. {{{
+} // }}}
+
+// Module registration.
 PyMODINIT_FUNC PyInit_lua() { // {{{
 	static PyModuleDef Module = { // {{{
 		PyModuleDef_HEAD_INIT,
@@ -616,7 +672,6 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 	//fprintf(stderr, "done.\n");
 	return m;
 } // }}}
-// }}}
 
 PyTypeObject *Lua_type;
 

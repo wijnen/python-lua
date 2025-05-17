@@ -69,62 +69,6 @@ static PyObject *iadd_method(Table *self, PyObject *args) { // {{{
 	return (PyObject *)self;
 } // }}}
 
-/*
-static PyObject *getitem_method(Table *self, PyObject *args) { // {{{
-	PyObject *key;
-	if (!PyArg_ParseTuple(args, "O", &key))	// borrowed reference.
-		return NULL;
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
-	Lua_push(self->lua, key);	// Key pushed.
-	lua_gettable(self->lua->state, -2);	// Key replaced by value.
-	PyObject *ret = Lua_to_python(self->lua, -1);
-	lua_pop(self->lua->state, 2);
-	if (ret == Py_None) {
-		PyErr_Format(PyExc_IndexError, "Key %s does not exist in Lua table", PyObject_Str(key));
-		Py_DECREF(ret);
-		return NULL;
-	}
-	return ret;
-} // }}}
-
-static PyObject *setitem_method(Table *self, PyObject *args) { // {{{
-	PyObject *key;
-	PyObject *value;
-	if (!PyArg_ParseTuple(args, "OO", &key, &value))	// borrowed references.
-		return NULL;
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
-	Lua_push(self->lua, key);
-	Lua_push(self->lua, value);
-	lua_settable(self->lua->state, -3);	// Pops key and value from stack
-	lua_pop(self->lua->state, 1);
-	Py_DECREF(key);
-	Py_DECREF(value);
-	Py_RETURN_NONE;
-} // }}}
-
-static PyObject *delitem_method(Table *self, PyObject *args) { // {{{
-	PyObject *key;
-	if (!PyArg_ParseTuple(args, "O", &key))	// borrowed reference.
-		return NULL;
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
-	Lua_push(self->lua, key);	// Key pushed.
-	// Raise IndexError if key doesn't exist: use getitem.
-	Lua_push(self->lua, key);	// Key pushed.
-	lua_gettable(self->lua->state, -2);	// Key replaced by value.
-	if (lua_isnil(self->lua->state, -1)) {
-		// Key did not exist in table.
-		PyErr_Format(PyExc_IndexError, "Key %s does not exist in Lua table", PyObject_Str(key));
-		lua_pop(self->lua->state, 2);
-		return NULL;
-	}
-	lua_pop(self->lua->state, 1);	// Old value popped.
-	Lua_push(self->lua, key);	// Key pushed.
-	lua_pushnil(self->lua->state);	// nil pushed.
-	lua_settable(self->lua->state, -3);	// Pops key and value from stack
-	Py_RETURN_NONE;
-} // }}}
-*/
-
 static PyObject *contains_method(Table *self, PyObject *args) { // {{{
 	// Check if the argument exists in the table as a value (not a key).
 	PyObject *value;
@@ -235,40 +179,83 @@ static PyObject *ge_method(Table *self, PyObject *args) { // {{{
 
 static PyObject *dict_method(Table *self, PyObject *args) { // {{{
 	// Get a copy of the table as a dict
+	// This function can be called as a method on self, or standalone.
+	// If called standalone, the target object is in args.
+	Table *target;
+	if (self == NULL) {
+		if (!PyArg_ParseTuple(args, "O", (PyObject **)&target))
+			return NULL;
+		if (!PyObject_IsInstance((PyObject *)target,
+					(PyObject *)table_type)) {
+			PyErr_Format(PyExc_ValueError,
+					"argument is not a Lua Table: %S",
+					(PyObject *)target);
+			return NULL;
+		}
+	} else {
+		if (!PyArg_ParseTuple(args, "")) {
+			PyErr_SetString(PyExc_ValueError,
+					"No argument expected");
+			return NULL;
+		}
+		target = self;
+	}
 	PyObject *ret = PyDict_New();
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
-	lua_pushnil(self->lua->state);
-	while (lua_next(self->lua->state, -2) != 0) {
-		PyObject *key = Lua_to_python(self->lua, -2);
-		PyObject *value = Lua_to_python(self->lua, -1);
+	lua_rawgeti(target->lua->state, LUA_REGISTRYINDEX, target->id);
+	lua_pushnil(target->lua->state);
+	while (lua_next(target->lua->state, -2) != 0) {
+		PyObject *key = Lua_to_python(target->lua, -2);
+		PyObject *value = Lua_to_python(target->lua, -1);
 		bool fail = PyDict_SetItem(ret, key, value) < 0;
 		Py_DECREF(key);
 		Py_DECREF(value);
 		if (fail) {
+			printf("Fail\n");
 			Py_DECREF(ret);
 			return NULL;
 		}
-		lua_pop(self->lua->state, 1);
+		lua_pop(target->lua->state, 1);
 	}
-	lua_pop(self->lua->state, 1);
+	lua_pop(target->lua->state, 1);
 	return ret;
 } // }}}
 
-static PyObject *list_method(Table *self, PyObject *args) { // {{{
+PyObject *table_list_method(Table *self, PyObject *args) { // {{{
 	// Get a copy of (the sequence elements of) the table, as a list. note that table[1] becomes list[0].
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
-	lua_len(self->lua->state, -1);
-	Py_ssize_t length = lua_tointeger(self->lua->state, -1);
-	lua_pop(self->lua->state, 1);
+	// This function can be called as a method on self, or standalone.
+	// If called standalone, the target object is in args.
+	Table *target;
+	if (self == NULL) {
+		if (!PyArg_ParseTuple(args, "O", (PyObject **)&target))
+			return NULL;
+		if (!PyObject_IsInstance((PyObject *)target,
+					(PyObject *)table_type)) {
+			PyErr_Format(PyExc_ValueError,
+					"argument is not a Lua Table: %S",
+					(PyObject *)target);
+			return NULL;
+		}
+	} else {
+		if (!PyArg_ParseTuple(args, "")) {
+			PyErr_SetString(PyExc_ValueError,
+					"No argument expected");
+			return NULL;
+		}
+		target = self;
+	}
+	lua_rawgeti(target->lua->state, LUA_REGISTRYINDEX, target->id);
+	lua_len(target->lua->state, -1);
+	Py_ssize_t length = lua_tointeger(target->lua->state, -1);
+	lua_pop(target->lua->state, 1);
 	PyObject *ret = PyList_New(length);
 	for (Py_ssize_t i = 1; i <= length; ++i) {
-		lua_rawgeti(self->lua->state, -1, i);
-		PyObject *value = Lua_to_python(self->lua, -1);
+		lua_rawgeti(target->lua->state, -1, i);
+		PyObject *value = Lua_to_python(target->lua, -1);
 		PyList_SET_ITEM(ret, i - 1, value);
 		Py_DECREF(value);
-		lua_pop(self->lua->state, 1);
+		lua_pop(target->lua->state, 1);
 	}
-	lua_pop(self->lua->state, 1);
+	lua_pop(target->lua->state, 1);
 	return ret;
 } // }}}
 
@@ -305,7 +292,7 @@ PyObject *Table_getitem(Table *self, PyObject *key) { // {{{
 	PyObject *ret = Lua_to_python(self->lua, -1);
 	lua_pop(self->lua->state, 2);
 	if (ret == Py_None) {
-		PyErr_Format(PyExc_IndexError, "Key %s does not exist in Lua table", PyObject_Str(key));
+		PyErr_Format(PyExc_IndexError, "Key %S does not exist in Lua table", key);
 		Py_DECREF(ret);
 		return NULL;
 	}
@@ -323,19 +310,6 @@ int Table_setitem(Table *self, PyObject *key, PyObject *value) { // {{{
 	lua_pop(self->lua->state, 1);
 	return 0;
 } // }}}
-
-/*
-static PyObject *len_method(Table *self, PyObject *args) { // {{{
-	PyObject *other;
-	if (!PyArg_ParseTuple(args, "O", &other))
-		return NULL;
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
-	lua_len(self->lua->state, -1);
-	PyObject *ret = Lua_to_python(self->lua, -1);
-	lua_pop(self->lua->state, 2);
-	return ret;
-} // }}}
-*/
 
 PyObject *Table_repr(PyObject *self) { // {{{
 	char str[100];
@@ -367,6 +341,8 @@ class Table: # Using Lua tables from Python. {{{
 
 // Python-accessible methods.
 PyMethodDef Table_methods[] = { // {{{
+	{"list", (PyCFunction)table_list_method, METH_VARARGS, "Create list from Lua table"},
+	{"dict", (PyCFunction)dict_method, METH_VARARGS, "Create dict from Lua table"},
 	//{"__len__", (PyCFunction)len_method, METH_VARARGS, "Call the # operator on the Lua table"},
 	{"__iadd__", (PyCFunction)iadd_method, METH_VARARGS, "Call the += operator on the Lua table"},
 	//{"__getitem__", (PyCFunction)getitem_method, METH_VARARGS, "Get item from Lua table"},
@@ -377,8 +353,6 @@ PyMethodDef Table_methods[] = { // {{{
 	{"__ne__", (PyCFunction)ne_method, METH_VARARGS, "Call the ~= operator on the Lua table"},
 	{"__gt__", (PyCFunction)gt_method, METH_VARARGS, "Call the > operator on the Lua table"},
 	{"__ge__", (PyCFunction)ge_method, METH_VARARGS, "Call the >= operator on the Lua table"},
-	{"dict", (PyCFunction)dict_method, METH_VARARGS, "Create dict from Lua table"},
-	{"list", (PyCFunction)list_method, METH_VARARGS, "Create list from Lua table"},
 	{"pop", (PyCFunction)pop_method, METH_VARARGS, "Remove item from Lua table"},
 	{NULL, NULL, 0, NULL}
 }; // }}}

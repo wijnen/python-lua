@@ -1,6 +1,6 @@
 __pycache__/
 *.egg-info
-dist/
-/mkconst
-/src/lua/luaconst.py
-/src-c/build/
+/dist/
+/build/
+/lua.cpython-*.so
+

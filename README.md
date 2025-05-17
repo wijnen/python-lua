@@ -13,16 +13,16 @@ code.run('python = require("python")')	# If you want to use it.
 
 # Define a Python function.
 def pyfun(arg):
-	print('Python function called with arg %s' % arg)
+	print("Python function called with arg '%s'." % arg)
 
 # Define a Lua function.
-code.run('function luafun(arg) print("Lua function called with arg " .. arg) end')
+code.run('''function luafun(arg) print("Lua function called with arg '" .. arg .. "'.") end''')
 
 # Make the Lua function accessible to Python (this could have been done in one step).
 luafun = code.run('return luafun')
 
 # Make the Python function accessible to Lua.
-code.run(var = 'pyfun', value = pyfun)
+code.set('pyfun', pyfun)
 
 # Run the Lua function from Python.
 luafun('from Python')
@@ -34,15 +34,23 @@ code.run('pyfun("from Lua")')
 print(type(code.run('return {1, 2, 3}')))	# Lua table (not a Python object)
 print(type(code.run('return python.list{1,2,3}')))	# Python list
 print(type(code.run('return python.dict{foo = "bar"}')))	# Python dict
+
+# Lua strings that are passed to Python must be UTF-8 encoded and are treated as str.
+print(repr(code.run('return "Unicode"')))
+
+# A bytes object can be created with python.bytes.
+print(repr(code.run('return python.bytes("Binary")')))
 ```
 
 This generates the following output:
 ```
-Lua function called with arg from Python
-Python function called with arg from Lua
+Lua function called with arg 'from Python'.
+Python function called with arg 'from Lua'.
 <class 'lua.Table'>
 <class 'list'>
 <class 'dict'>
+'Unicode'
+b'Binary'
 ```
 
 # API description
@@ -51,19 +59,7 @@ this may not be kept entirely up to date. If things don't seem to work as
 described here, please check the source code.
 
 ## Module Loading
-At the time of this writing, when the module is imported it will load Lua
-version 5.4. This can be adjusted using the environment variable
-`PYTHON_LUA_VERSION`, which should be set to the version (`'5.4'` is the
-default). This means that a program which requires a specific Lua version
-should set this variable before importing the module, even if it is 5.4, to
-make sure the correct version is loaded. Not doing so will allow the user to
-try different versions.
-
 ```Python
-# Optional. If this is used, it must come before importing lua.
-import os
-os.environ['PYTHON_LUA_VERSION'] = '5.4'
-
 # Import Lua module.
 import lua
 ```
@@ -72,8 +68,18 @@ import lua
 To use the module, an instance of the Lua class must be created. Creating
 multiple instances of this class allows you to have completely separate
 environments, which do not share any state with each other. Note that combining
-variables from different instances in one command results in undefined
-behavior.
+Lua variables from different instances results in undefined behavior. For
+exampe, this should not be done:
+```Python
+# INCORRECT CODE!
+import lua
+A = lua.Lua()
+B = lua.Lua()
+
+table = A.run('return {}')
+B.set('table_from_A', table)
+# INCORRECT CODE!
+```
 
 When creating an instance, the default is to disable all Lua features that are
 a risk for security or user privacy. Each of these features can be enabled by
@@ -87,9 +93,9 @@ setting the corresponding constructor parameter to True. The features are:
 - os: enable all of the os module. Even when not enabled, `clock`, `date`, `difftime`, `setlocale` and `time` are still available. The rest of os allows running executables on the host system. This should only be enabled for trusted Lua code.
 
 Additionally, the 'python' module, which contains list and dict constructors,
-can be disabled by setting it to False. It is enabled by default. Note that
-this setting does not create the `python` variable; it only allows lua code to
-`require` it.
+can be disabled by setting `python_module` to False. It is enabled by default.
+Note that this setting does not create the `python` variable; it only allows
+lua code to `require` it.
 
 An example instance that allows access of the host filesystem through `io` is:
 
@@ -103,11 +109,9 @@ Python. There are two methods for granting this access: setting variables, and
 providing modules.
 
 ### Setting variables
-To set a Lua variable to a Python value, the run() method is used. This method
-is primarily intended for running Lua code (as described below), but it also
-serves to set a variable to a value. If a variable is set to a value and code
-to run is provided in the same call, the variable will be set before the code
-is run, so it has access to it.
+To set a Lua variable to a Python value, the `set` method is used. It takes two
+arguments: a string which is the name of the (possibly new) Lua variable, and
+its value. For convenience, if `run` is passed keyword arguments `var` and `value`, it calls `set` with those parameters before running the Lua code.
 
 If the variable is mutable (for example, it is a `list`), then changing the
 contents of the value will result in a changed value in Python. In other words,
@@ -116,7 +120,7 @@ mutable variables are passed by reference and remain owned by Python.
 ```Python
 my_list = [1, 2, 3]
 code.run('foo[2] = "bar"', var = 'foo', value = my_list)
-# my_list is now [1, 'bar', 3]. Note that lua-indexing is 1-based.
+# my_list is now [1, 'bar', 3]. Note that Lua-indexing is 1-based.
 ```
 
 ### Providing modules
@@ -129,9 +133,21 @@ to the _values_ of the items will show up, however.
 
 ```Python
 import my_custom_module
-code.module(my_custom_module)
-code.run('mod = require "my_custom_module"; mod.custom_function()')
+code.module('my_module', my_custom_module)
+code.run('mod = require "my_module"; mod.custom_function()')
 ```
+
+### The builtin `python` module
+Unless `python_module` is set to `False` in the Lua constructor, the `python` module is accessible to Lua code. It contains three functions:
+1. `list(lua_table)` converts a lua table to a Python list, as when calling `lua_table.list()` from Python.
+1. `dict(lua_table)` converts a lua table to a Python dict, as when calling `lua_table.dict()` from Python.
+1. `bytes(obj)` converts an object to a Python bytes object.
+
+#### The `python.bytes` function
+This function converts its argument to a Python `bytes` object. There are several cases:
+- If the argument is a Lua Table, it converts it to a Python list using its `list` method. This is then passed to Python's `bytes` constructor. It should therefore contain only integers in the range from 0 to 255.
+- If the argument is a Lua string, it encodes it as UTF-8.
+- Otherwise, the object is passed to Python's `bytes` constructor.
 
 ## Running Lua code
 There are two ways to run Lua code. Using the `run()` function demonstrated in
@@ -157,13 +173,17 @@ However, while this is the consideration behind the functions, there is nothing
 to enforce it. If you want to run large amounts of code with `run()`, or a
 single line computation with `run_file()`, it will work without any problems.
 
+Both `run` and `run_file` accept a `description` argument, which must be a
+string. It is used in error messages. If not provided, the lua code is used as
+a description for `run` and the filename is used for `run_file`.
+
 ### Return values
 Both `run()` and `run_file()` can return a value. This is the primary method
 for accessing Lua values from Python. (The other option is to provide a
 container from Python and injecting a value from Lua.) Because Lua functions
 can return multiple values, this leads to a usability issue: the return value
-could always be a sequence, but that is invonvenient for the usual case when
-zero or one value is returned.
+could always be a sequence, but that is inconvenient for the usual case when
+zero or one values are returned.
 
 This is solved by converting the result in those cases:
 
@@ -193,8 +213,7 @@ not work, but `luatable['foo']` does.
 
 - `luatable.dict()`: Converts the table to a Python dict, containing all items.
 - `luatable.list()`: Converts the table to a Python list. Only the values with integer keys are inserted, and the list stops at the first missing element. In other words, this is only useful for lists that don't contain nil "values". Also note that the indexing changes: luatable[1] is the first element, and it is the same as luatable.list()[0].
-- `luatable.pop(index = -1)`: Removes the last index (or the given index) from the table and shifts the contents of the table to fill its place using `table.remove`. The index must be an integer. If it is negative, the length of the table is added to it.
-- `code.make_table(data = ())`: Create a Lua table from the given data and return it as a Python object. The object is created in and owned by Lua. The first element in the sequence will have index 1 in the table.
+- `luatable.pop(index = -1)`: Removes the last index (or the given index) from the table and shifts the contents of the table to fill its place using `table.remove`. The index must be an integer. Negative indices count from the back of the list, with -1 being the last element.
 
 ## First elements
 Because there is a difference between the index of the first element of a list
@@ -210,6 +229,6 @@ Here's an example to show this:
 python_list = ['zero', 'one', 'two']
 lua_table = code.run('return {"one", "two", "three"}')
 
-code.run('print("element 2 in the python list is two: " .. list[2])', var = 'list', value = python_list)
+code.run('''print('element 2 in the python list is "two": ' .. list[2])''', var = 'list', value = python_list)
 print('element 2 in the lua table is "two":', lua_table[2])
 ```
