@@ -107,31 +107,24 @@ static lua_Integer build_wrapper(Lua *self, char const *code, char const *desc, 
 } // }}}
 
 // Create (native) Lua table on Lua stack from items in Python list or dict.
-static void push_luatable(Lua *self, PyObject *obj) { // {{{
-	if (PyDict_Check(obj)) {
-		lua_createtable(self->state, 0, PyDict_Size(obj));	// Pushes new table on the stack.
-		Py_ssize_t ppos = 0;
-		PyObject *key;
-		PyObject *value;
-		while (PyDict_Next(obj, &ppos, &key, &value)) {	// Key and value become borrowed references.
-			Lua_push(self, key);
-			Lua_push(self, value);
-			lua_rawset(self->state, -3); // Pops key and value from the stack.
-		}
+static void push_luatable_dict(Lua *self, PyObject *obj) { // {{{
+	Py_ssize_t ppos = 0;
+	PyObject *key;
+	PyObject *value;
+	while (PyDict_Next(obj, &ppos, &key, &value)) {	// Key and value become borrowed references.
+		Lua_push(self, key);
+		Lua_push(self, value);
+		lua_rawset(self->state, -3); // Pops key and value from the stack.
 	}
-	else if (PySequence_Check(obj)) {
-		lua_createtable(self->state, PySequence_Size(obj), 0);	// Pushes new table on the stack.
-		Py_ssize_t size = PySequence_Size(obj);
-		for (Py_ssize_t i = 0; i < size; ++i) {
-			PyObject *value = PySequence_GetItem(obj, i);	// New reference.
-			Lua_push(self, value);
-			Py_DECREF(value);
-			lua_rawseti(self->state, -2, i + 1);
-		}
-	}
-	else {
-		printf("aborting: not dict or sequence.\n");
-		abort();
+} // }}}
+
+static void push_luatable_list(Lua *self, PyObject *obj) { // {{{
+	Py_ssize_t size = PySequence_Size(obj);
+	for (Py_ssize_t i = 0; i < size; ++i) {
+		PyObject *value = PySequence_GetItem(obj, i);	// New reference.
+		Lua_push(self, value);
+		Py_DECREF(value);
+		lua_rawseti(self->state, -2, i + 1);
 	}
 } // }}}
 
@@ -148,15 +141,15 @@ static PyObject *construct_bytes_impl(PyObject * /*self*/, PyObject *args) // {{
 	if (PyUnicode_Check(arg))
 		return PyUnicode_AsUTF8String(arg);
 	return PyBytes_FromObject(arg);
-} // }}}
+}
 static PyMethodDef construct_bytes_method = {
 	"constuct_bytes",
 	(PyCFunction)construct_bytes_impl,
 	METH_VARARGS,
 	"Convert argument to bytes"
-};
+}; // }}}
 
-static int call_method(lua_State *state)
+static int call_method(lua_State *state) // {{{
 {
 	lua_getfield(state, LUA_REGISTRYINDEX, "self");
 	Lua *lua = (Lua *)lua_touserdata(state, -1);
@@ -186,7 +179,7 @@ static int call_method(lua_State *state)
 	Lua_push(lua, ret);	// Unpack returned sequence?
 	Py_DECREF(ret);
 	return 1;
-}
+} // }}}
 
 // Python class Lua __new__ function.
 static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords) { // {{{
@@ -279,6 +272,21 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 	self->table_remove = build_wrapper(self, "return table.remove", "get table.remove", true);
 	if (self->table_remove == LUA_NOREF)
 		return NULL;
+	self->table_concat = build_wrapper(self, "return table.concat", "get table.concat", true);
+	if (self->table_concat == LUA_NOREF)
+		return NULL;
+	self->table_insert = build_wrapper(self, "return table.insert", "get table.insert", true);
+	if (self->table_insert == LUA_NOREF)
+		return NULL;
+	self->table_unpack = build_wrapper(self, "return table.unpack", "get table.unpack", true);
+	if (self->table_unpack == LUA_NOREF)
+		return NULL;
+	self->table_move = build_wrapper(self, "return table.move", "get table.move", true);
+	if (self->table_move == LUA_NOREF)
+		return NULL;
+	self->table_sort = build_wrapper(self, "return table.sort", "get table.sort", true);
+	if (self->table_sort == LUA_NOREF)
+		return NULL;
 	self->package_loaded = build_wrapper(self, "return package.loaded", "get package.loaded", true);
 	if (self->package_loaded == LUA_NOREF)
 		return NULL;
@@ -346,6 +354,27 @@ static void set(Lua *self, char const *name, PyObject *value) { // {{{
 	lua_settop(self->state, -2);
 } // }}}
 
+static PyObject *return_stack(Lua *self, int pos, bool keep_single) { // {{{
+	int size = lua_gettop(self->state) - pos;
+	PyObject *ret;
+	if (keep_single || size > 1) {
+		ret = PyTuple_New(size);
+		if (ret == NULL)
+			return NULL;
+		for (int i = 0; i < size; ++i)
+			PyTuple_SET_ITEM(ret, i, Lua_to_python(self, -size + i));
+		lua_settop(self->state, pos);
+		return ret;
+	} else if (size == 1) {
+		ret = Lua_to_python(self, -1);
+		lua_settop(self->state, pos);
+		return ret;
+	} else {
+		lua_settop(self->state, pos);
+		Py_RETURN_NONE;
+	}
+} // }}}
+
 // run code after having loaded the buffer (internal use only).
 static PyObject *run_code(Lua *self, int pos, bool keep_single) { // {{{
 	lua_call(self->state, 0, LUA_MULTRET);
@@ -353,19 +382,7 @@ static PyObject *run_code(Lua *self, int pos, bool keep_single) { // {{{
 		lua_settop(self->state, 0);
 		return NULL;
 	}
-	int size = lua_gettop(self->state) - pos;
-	PyObject *ret;
-	if (keep_single || size > 1) {
-		ret = PyTuple_New(size);
-		for (int i = 0; i < size; ++i)
-			PyTuple_SET_ITEM(ret, i, Lua_to_python(self, -size + i));
-	}
-	else if (size == 1)
-		ret = Lua_to_python(self, -1);
-	else
-		ret = Py_None;
-	lua_settop(self->state, pos);
-	return ret;
+	return return_stack(self, pos, keep_single);
 } // }}}
 
 // run string in lua.
@@ -379,9 +396,9 @@ static PyObject *run(Lua *self, char const *cmd, char const *description, bool k
 } // }}}
 
 // run file in lua.
-static PyObject *do_run_file(Lua *self, char const *filename, char const *description, bool keep_single) { // {{{
+static PyObject *do_run_file(Lua *self, char const *filename, bool keep_single) { // {{{
 	int pos = lua_gettop(self->state);
-	if (luaL_loadfilex(self->state, filename, description) != LUA_OK) {
+	if (luaL_loadfilex(self->state, filename, NULL) != LUA_OK) {
 		PyErr_SetString(PyExc_ValueError, lua_tostring(self->state, -1));
 		return NULL;
 	}
@@ -413,7 +430,8 @@ void lua_load_module(Lua *self, char const *name, PyObject *dict) { // {{{
 		dict = new_dict;
 	}
 	lua_geti(self->state, LUA_REGISTRYINDEX, self->package_loaded);
-	push_luatable(self, dict);
+	lua_createtable(self->state, 0, PyDict_Size(dict));	// Pushes new table on the stack.
+	push_luatable_dict(self, dict);	// Fills it with contents.
 	lua_setfield(self->state, -2, name);
 	lua_settop(self->state, -2);
 } // }}}
@@ -446,7 +464,6 @@ PyObject *Lua_to_python(Lua *self, int index) { // {{{
 	case LUA_TTABLE:
 		lua_pushvalue(self->state, index);
 		return Table_create(self);
-		//Py_RETURN_NONE;
 	case LUA_TFUNCTION:
 		lua_pushvalue(self->state, index);
 		return Function_create(self);
@@ -511,30 +528,32 @@ static PyObject *Lua_run(Lua *self, PyObject *args, PyObject *keywords) { // {{{
 	bool keep_single = false;
 	char const *var = NULL;
 	PyObject *value = NULL;
-	char const *keywordnames[] = {"code", "description", "keep_single", "var", "value", NULL};
+	char const *keywordnames[] = {"code", "description", "var", "value", "keep_single", NULL};
 	if (!PyArg_ParseTupleAndKeywords(args, keywords, "s|ssOp", (char **)keywordnames, &code, &description, &var, &value, &keep_single))
 		return NULL;
 	if (!description)
 		description = code;
-	if (var)
+	if (var || value) {
+		if (!var || !value) {
+			PyErr_SetString(PyExc_ValueError, "var and value must both be present, or both be missing");
+			return NULL;
+		}
 		set(self, var, value);
+	}
 	return run(self, code, description, keep_single);
 } // }}}
 
 static PyObject *Lua_run_file(Lua *self, PyObject *args, PyObject *keywords) { // {{{
 	char const *filename;
-	char const *description = NULL;
 	bool keep_single = false;
 	char const *var = NULL;
 	PyObject *value = NULL;
-	char const *keywordnames[] = {"filename", "description", "keep_single", "var", "value", NULL};
-	if (!PyArg_ParseTupleAndKeywords(args, keywords, "s|ssOp", (char **)keywordnames, &filename, &description, &var, &value, &keep_single))
+	char const *keywordnames[] = {"filename", "keep_single", "var", "value", NULL};
+	if (!PyArg_ParseTupleAndKeywords(args, keywords, "s|sOp", (char **)keywordnames, &filename, &var, &value, &keep_single))
 		return NULL;
-	if (!description)
-		description = filename;
 	if (var)
 		set(self, var, value);
-	return do_run_file(self, filename, description, keep_single);
+	return do_run_file(self, filename, keep_single);
 } // }}}
 
 static PyObject *Lua_module(Lua *self, PyObject *args) { // {{{
@@ -544,6 +563,16 @@ static PyObject *Lua_module(Lua *self, PyObject *args) { // {{{
 		return NULL;
 	lua_load_module(self, name, dict);
 	Py_RETURN_NONE;
+} // }}}
+
+static PyObject *Lua_table(Lua *self, PyObject *args, PyObject *kwargs) { // {{{
+	int pos = lua_gettop(self->state);
+	size_t kw_size = kwargs == NULL ? 0 : PyDict_Size(kwargs);
+	lua_createtable(self->state, PySequence_Size(args), kw_size);	// Pushes new table on the stack.
+	push_luatable_list(self, args);
+	if (kwargs != NULL)
+		push_luatable_dict(self, kwargs);
+	return return_stack(self, pos, false);
 } // }}}
 // }}}
 
@@ -580,6 +609,7 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 		{"run", (PyCFunction)Lua_run, METH_VARARGS | METH_KEYWORDS, "Run a Lua script"},
 		{"run_file", (PyCFunction)Lua_run_file, METH_VARARGS | METH_KEYWORDS, "Run a Lua script from a file"},
 		{"module", (PyCFunction)Lua_module, METH_VARARGS, "Import a module into Lua"},
+		{"table", (PyCFunction)Lua_table, METH_VARARGS | METH_KEYWORDS, "Create a Lua Table"},
 		{NULL, NULL, 0, NULL}
 	}; // }}}
 	static PyType_Slot lua_slots[] = { // {{{
@@ -616,7 +646,6 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 	FunctionType->slots = function_slots;
 	// }}}
 	static PyType_Slot table_slots[] = { // {{{
-		//{ Py_tp_new, NULL,	// FIXME: allow creating a Table from data.
 		{ Py_tp_dealloc, Table_dealloc },
 		{ Py_tp_doc, "Access a Lua-owned table from Python" },
 		{ Py_tp_repr, Table_repr },
@@ -635,6 +664,24 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 	TableType->itemsize = 0;
 	TableType->flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HEAPTYPE;
 	TableType->slots = table_slots;
+	// }}}
+	static PyType_Slot table_iter_slots[] = { // {{{
+		{ Py_tp_dealloc, Table_iter_dealloc },
+		{ Py_tp_doc, "iterator for lua.table" },
+		{ Py_tp_repr, Table_iter_repr },
+		{ Py_tp_str, Table_iter_repr },
+		{ Py_tp_iter, Table_iter_iter },
+		{ Py_tp_iternext, Table_iter_iternext },
+		{ 0, NULL },
+	}; // }}}
+	static PyType_Spec *TableIterType; // {{{
+	TableIterType = malloc(sizeof(*TableIterType));
+	memset(TableIterType, 0, sizeof(*TableIterType));
+	TableIterType->name = "lua.Table.iterator";
+	TableIterType->basicsize = sizeof(TableIter);
+	TableIterType->itemsize = 0;
+	TableIterType->flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HEAPTYPE;
+	TableIterType->slots = table_iter_slots;
 	// }}}
 
 	//fprintf(stderr, "creating module.\n");
@@ -668,6 +715,17 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 		return NULL;
 	}
 	Py_INCREF(table_type);
+
+	//fprintf(stderr, "creating type table_iter.\n");
+	table_iter_type = (PyTypeObject *)PyType_FromModuleAndSpec(m, TableIterType, NULL);
+	if (!table_iter_type || PyModule_AddObject(m, "TableIter", (PyObject *)table_iter_type) < 0) {
+		Py_DECREF(Lua_type);
+		Py_DECREF(function_type);
+		Py_DECREF(table_type);
+		Py_DECREF(m);
+		return NULL;
+	}
+	Py_INCREF(table_iter_type);
 
 	//fprintf(stderr, "done.\n");
 	return m;

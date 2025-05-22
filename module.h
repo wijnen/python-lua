@@ -142,6 +142,7 @@ extern struct OperatorMap operators[NUM_OPERATORS];
 extern PyTypeObject *Lua_type;
 extern PyTypeObject *function_type;
 extern PyTypeObject *table_type;
+extern PyTypeObject *table_iter_type;
 
 typedef struct Lua { // {{{
 	PyObject_HEAD
@@ -150,6 +151,11 @@ typedef struct Lua { // {{{
 
 	// Copies of initial values of some globals, to use later regardless of them changing in Lua.
 	lua_Integer table_remove;
+	lua_Integer table_concat;
+	lua_Integer table_insert;
+	lua_Integer table_unpack;
+	lua_Integer table_move;
+	lua_Integer table_sort;
 	lua_Integer package_loaded;
 
 	// Stored Lua functions of all operators, to be used from Python calls on Lua-owned objects.
@@ -199,9 +205,6 @@ typedef struct Table { // {{{
 
 	// Context in which this object is defined.
 	Lua *lua;
-
-	// Running key for iterating over object.
-	lua_Integer iter_ref;
 } Table; // }}}
 
 // Construct new table from value at top of stack.
@@ -211,7 +214,29 @@ PyObject *Table_repr(PyObject *self);
 Py_ssize_t Table_len(Table *self);
 PyObject *Table_getitem(Table *self, PyObject *key);
 int Table_setitem(Table *self, PyObject *key, PyObject *value);
-extern PyMethodDef Table_methods[];
 PyObject *table_list_method(Table *self, PyObject *args);
+extern PyMethodDef Table_methods[];
+
+// Class to iterate over table elements.
+typedef struct TableIter { // {{{
+	PyObject_HEAD
+
+	// Object that we are iterating over, or NULL.
+	PyObject *target;
+
+	// Iteration type: pairs or ipairs.
+	bool is_ipairs;
+
+	// Current key for pairs iteration.
+	PyObject *current;
+
+	// Current key for ipairs iteration.
+	int icurrent;
+} TableIter; // }}}
+PyObject *Table_iter_create(PyObject *target, bool is_ipairs);
+void Table_iter_dealloc(TableIter *self);
+PyObject *Table_iter_repr(PyObject *self);
+PyObject *Table_iter_iter(PyObject *self);
+PyObject *Table_iter_iternext(TableIter *self);
 
 // vim: set foldmethod=marker :

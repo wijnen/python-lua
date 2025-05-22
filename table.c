@@ -17,28 +17,20 @@
 
 #include "module.h"
 
-#if 1
 PyObject *Table_create(Lua *context) { // {{{
 	Table *self = (Table *)(table_type->tp_alloc(table_type, 0));
 	if (!self)
 		return NULL;
 	self->lua = context;
 	Py_INCREF(self->lua);
-	self->iter_ref = LUA_NOREF;
 	self->id = luaL_ref(self->lua->state, LUA_REGISTRYINDEX);
-	/*
-	for (int i = 0; i < NUM_OPERATORS; ++i) {
-		// Skip functions that are hardcoded into the type.
-		if (i == STR || i == CLOSE)
-			continue;
-		fprintf(stderr, "setting method %s\n", operators[i].python_name);
-		PyObject_SetAttrString((PyObject *)self, operators[i].python_name, context->lua_operator[i]);
-	}*/
+	//fprintf(stderr, "alloc table %p\n", self);
 	return (PyObject *)self;
 }; // }}}
 
 // Destructor.
 void Table_dealloc(Table *self) { // {{{
+	//fprintf(stderr, "dealloc %p refcnt %ld\n", self, Py_REFCNT((PyObject *)self));
 	luaL_unref(self->lua->state, LUA_REGISTRYINDEX, self->id);
 	Py_DECREF(self->lua);
 	table_type->tp_free((PyObject *)self);
@@ -64,7 +56,6 @@ static PyObject *iadd_method(Table *self, PyObject *args) { // {{{
 		length += 1;
 		Py_DECREF(item);
 	}
-	Py_DECREF(iterator);
 	lua_pop(self->lua->state, 1);
 	return (PyObject *)self;
 } // }}}
@@ -89,52 +80,6 @@ static PyObject *contains_method(Table *self, PyObject *args) { // {{{
 	lua_pop(self->lua->state, 2);
 	Py_RETURN_FALSE;
 } // }}}
-
-/*static void clear_iter() { // {{{
-	if (iter_ref != LUA_REFNIL)
-		luaL_unref(lua->state, LUA_REGISTRYINDEX, iter_ref);
-	iter_ref = LUA_NOREF;
-} // }}}
-
-static PyObject *iter_method(Table *self, PyObject *args) { // {{{
-	// Destroy pending iteration, if any.
-	if (self->iter_ref != LUA_NOREF)
-		self->clear_iter();
-	self->iter_ref = LUA_REFNIL;
-	// TODO: the iterator should really be a copy of the object, to allow multiple iterations simultaneously.
-	Py_INCREF(self);
-	return (PyObject *)self;
-} // }}}
-
-static PyObject *next_method(Table *self, PyObject *args) { // {{{
-	if (!PyArg_ParseTuple(args, ""))
-		return NULL;
-	if (self->iter_ref == LUA_NOREF) {
-		PyErr_SetString(PyExc_ValueError, "next called on invalid iterator");
-		return NULL;
-	}
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->iter_ref);	// previous key pushed.
-	if (lua_next(self->lua->state, -2) == 0) {
-		self->clear_iter();
-		lua_pop(self->lua->state, 1);
-		PyErr_SetNone(PyExc_StopIteration);
-		return NULL;
-	}
-	PyObject *ret = Lua_to_python(self->lua, -2);
-	lua_pop(self->lua->state, 1);	// Pop value.
-	if (self->iter_ref == LUA_REFNIL) {
-		luaL_ref(self->lua->state, LUA_REGISTRYINDEX);	// Pop and store key.
-		lua_pop(self->lua->state, 1);	// Pop table.
-	}
-	else {
-		lua_pushinteger(self->lua->state, self->iter_ref);	// Push ref as key.
-		lua_pushvalue(self->lua->state, -2);	// Push table key as value. Stack is now [table, key, ref, key]
-		lua_settable(self->lua->state, LUA_REGISTRYINDEX);	// Store key in registry, pop ref and key.
-		lua_pop(self->lua->state, 2);	// Pop table and key.
-	}
-	return ret;
-} // }}} */
 
 static PyObject *ne_method(Table *self, PyObject *args) { // {{{
 	PyObject *other;
@@ -193,11 +138,8 @@ static PyObject *dict_method(Table *self, PyObject *args) { // {{{
 			return NULL;
 		}
 	} else {
-		if (!PyArg_ParseTuple(args, "")) {
-			PyErr_SetString(PyExc_ValueError,
-					"No argument expected");
+		if (!PyArg_ParseTuple(args, ""))
 			return NULL;
-		}
 		target = self;
 	}
 	PyObject *ret = PyDict_New();
@@ -210,7 +152,8 @@ static PyObject *dict_method(Table *self, PyObject *args) { // {{{
 		Py_DECREF(key);
 		Py_DECREF(value);
 		if (fail) {
-			printf("Fail\n");
+			//fprintf(stderr, "Fail\n");
+			//fprintf(stderr, "decref %p\n", ret);
 			Py_DECREF(ret);
 			return NULL;
 		}
@@ -236,11 +179,8 @@ PyObject *table_list_method(Table *self, PyObject *args) { // {{{
 			return NULL;
 		}
 	} else {
-		if (!PyArg_ParseTuple(args, "")) {
-			PyErr_SetString(PyExc_ValueError,
-					"No argument expected");
+		if (!PyArg_ParseTuple(args, ""))
 			return NULL;
-		}
 		target = self;
 	}
 	lua_rawgeti(target->lua->state, LUA_REGISTRYINDEX, target->id);
@@ -252,29 +192,193 @@ PyObject *table_list_method(Table *self, PyObject *args) { // {{{
 		lua_rawgeti(target->lua->state, -1, i);
 		PyObject *value = Lua_to_python(target->lua, -1);
 		PyList_SET_ITEM(ret, i - 1, value);
-		Py_DECREF(value);
 		lua_pop(target->lua->state, 1);
 	}
 	lua_pop(target->lua->state, 1);
 	return ret;
 } // }}}
 
-static PyObject *pop_method(Table *self, PyObject *args) { // {{{
-	Py_ssize_t index = -1;
+static PyObject *remove_method(Table *self, PyObject *args) { // {{{
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	Py_ssize_t index = Table_len(self);
 	if (!PyArg_ParseTuple(args, "|n", &index))
 		return NULL;
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
-	if (index < 0) {
-		lua_len(self->lua->state, -1);
-		index += lua_tointeger(self->lua->state, -1);
-		lua_pop(self->lua->state, 1);
-	}
 	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->lua->table_remove);
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
 	lua_pushinteger(self->lua->state, index);
-	lua_call(self->lua->state, 1, 1);
+	lua_call(self->lua->state, 2, 1);
 	PyObject *ret = Lua_to_python(self->lua, -1);
-	lua_pop(self->lua->state, 2);
+	lua_pop(self->lua->state, 1);
 	return ret;
+} // }}}
+
+static PyObject *concat_method(Table *self, PyObject *args) { // {{{
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	const char *sep = "";
+	Py_ssize_t seplen = 0, i = 1, j = Table_len(self);
+	if (!PyArg_ParseTuple(args, "|s#nn", &sep, &seplen, &i, &j))
+		return NULL;
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->lua->table_concat);
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	lua_pushlstring(self->lua->state, sep, seplen);
+	lua_pushinteger(self->lua->state, i);
+	lua_pushinteger(self->lua->state, j);
+	lua_call(self->lua->state, 4, 1);
+	PyObject *ret = Lua_to_python(self->lua, -1);
+	lua_pop(self->lua->state, 1);
+	return ret;
+} // }}}
+
+static PyObject *insert_method(Table *self, PyObject *args) { // {{{
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	Py_ssize_t length = PySequence_Length(args);
+	Py_ssize_t pos;
+	PyObject *value;
+	switch (length) {
+	case 1:
+		if (!PyArg_ParseTuple(args, "O", &value))
+			return NULL;
+		pos = Table_len(self) + 1;
+		break;
+	case 2:
+		if (!PyArg_ParseTuple(args, "nO", &pos, &value))
+			return NULL;
+		break;
+	default:
+		PyErr_SetString(PyExc_ValueError, "invalid argument for lua.Table.insert");
+		return NULL;
+	}
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->lua->table_insert);
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	lua_pushinteger(self->lua->state, pos);
+	Lua_push(self->lua, value);
+	lua_call(self->lua->state, 3, 0);
+	lua_pop(self->lua->state, 1);
+	Py_RETURN_NONE;
+} // }}}
+
+static PyObject *unpack_method(Table *self, PyObject *args) { // {{{
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	Py_ssize_t i = 1, j = Table_len(self);
+	if (!PyArg_ParseTuple(args, "|nn", &i, &j))
+		return NULL;
+	int oldtop = lua_gettop(self->lua->state);
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->lua->table_unpack);
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	lua_pushinteger(self->lua->state, i);
+	lua_pushinteger(self->lua->state, j);
+	lua_call(self->lua->state, 3, LUA_MULTRET);
+	int newtop = lua_gettop(self->lua->state);
+	PyObject *ret = PyTuple_New(newtop - oldtop);
+	if (ret == NULL) {
+		lua_settop(self->lua->state, oldtop);
+		return NULL;
+	}
+	int p;
+	for (p = oldtop + 1; p <= newtop; ++p)
+		PyTuple_SET_ITEM(ret, p - oldtop - 1, Lua_to_python(self->lua, p));
+	lua_settop(self->lua->state, oldtop);
+	return ret;
+} // }}}
+
+static PyObject *move_method(Table *self, PyObject *args) { // {{{
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	PyObject *other = NULL;
+	Py_ssize_t f, e, t;
+	if (!PyArg_ParseTuple(args, "nnn|O!", &f, &e, &t,
+				(PyObject *)table_type, &other))
+		return NULL;
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->lua->table_move);
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	lua_pushinteger(self->lua->state, f);
+	lua_pushinteger(self->lua->state, e);
+	lua_pushinteger(self->lua->state, t);
+	if (other != NULL) {
+		Lua_push(self->lua, other);
+		lua_call(self->lua->state, 5, 1);
+	} else {
+		lua_call(self->lua->state, 4, 1);
+	}
+	PyObject *ret = Lua_to_python(self->lua, -1);
+	lua_pop(self->lua->state, 1);
+	return ret;
+} // }}}
+
+static PyObject *sort_method(Table *self, PyObject *args) { // {{{
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	PyObject *comp = NULL;
+	if (!PyArg_ParseTuple(args, "|O", &comp))
+		return NULL;
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->lua->table_sort);
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	if (comp != NULL) {
+		Lua_push(self->lua, comp);
+		lua_call(self->lua->state, 2, 1);
+	} else {
+		lua_call(self->lua->state, 1, 1);
+	}
+	PyObject *ret = Lua_to_python(self->lua, -1);
+	lua_pop(self->lua->state, 1);
+	return ret;
+} // }}}
+
+static PyObject *pairs_method(Table *self, PyObject *args) { // {{{
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	return Table_iter_create((PyObject *)self, false);
+} // }}}
+
+static PyObject *ipairs_method(Table *self, PyObject *args) { // {{{
+	//fprintf(stderr, "ipairs\n");
+	if (!PyObject_IsInstance((PyObject *)self,
+				(PyObject *)table_type)) {
+		PyErr_Format(PyExc_ValueError,
+				"argument is not a Lua Table: %S",
+				(PyObject *)self);
+		return NULL;
+	}
+	return Table_iter_create((PyObject *)self, true);
 } // }}}
 
 Py_ssize_t Table_len(Table *self) { // {{{
@@ -293,7 +397,6 @@ PyObject *Table_getitem(Table *self, PyObject *key) { // {{{
 	lua_pop(self->lua->state, 2);
 	if (ret == Py_None) {
 		PyErr_Format(PyExc_IndexError, "Key %S does not exist in Lua table", key);
-		Py_DECREF(ret);
 		return NULL;
 	}
 	return ret;
@@ -316,28 +419,91 @@ PyObject *Table_repr(PyObject *self) { // {{{
 	snprintf(str, sizeof(str), "<lua.Table@%p>", self);
 	return PyUnicode_DecodeUTF8(str, strlen(str), NULL);
 } // }}}
+
+// Iterator methods. {{{
+PyObject *Table_iter_create(PyObject *target, bool is_ipairs) { // {{{
+	TableIter *self = (TableIter *)
+		(table_iter_type->tp_alloc(table_iter_type, 0));
+	if (!self)
+		return NULL;
+	self->target = target;
+	Py_INCREF(self);
+	Py_INCREF(target);
+	//fprintf(stderr, "new iter %p %p refcnt %ld, %ld\n", target, self,
+	//		Py_REFCNT((PyObject *)self), Py_REFCNT(target));
+	self->is_ipairs = is_ipairs;
+	if (is_ipairs) {
+		self->current = NULL;
+		self->icurrent = 0;
+	} else {
+		self->current = Py_None;
+		self->icurrent = -1;
+	}
+	return (PyObject *)self;
+} // }}}
+
+void Table_iter_dealloc(TableIter *self) { // {{{
+	//fprintf(stderr, "dealloc iter %p / %p\n", self, self->target);
+	if (self->target != NULL)
+		Py_DECREF(self->target);
+	if (self->current != NULL)
+		Py_DECREF(self->current);
+	table_iter_type->tp_free((PyObject *)self);
+} // }}}
+
+PyObject *Table_iter_repr(PyObject *self) { // {{{
+	char str[100];
+	snprintf(str, sizeof(str), "<lua.Table.iterator@%p>", self);
+	return PyUnicode_DecodeUTF8(str, strlen(str), NULL);
+} // }}}
+
+PyObject *Table_iter_iter(PyObject *self) { // {{{
+	//fprintf(stderr, "iter %p\n", self);
+	return self;
+} // }}}
+
+PyObject *Table_iter_iternext(TableIter *self) { // {{{
+	//fprintf(stderr, "next iter %p: %ld\n", self, Py_REFCNT(self));
+	//if (!PyObject_IsInstance((PyObject *)self,
+	//			(PyObject *)&table_iter_type)) {
+	//	PyErr_SetString(PyExc_ValueError,
+	//			"self must be a table iterator");
+	//	return NULL;
+	//}
+	Lua *lua = ((Table *)(self->target))->lua;
+	if (self->is_ipairs) {
+		if (self->icurrent < 0)
+			return NULL;
+		self->icurrent += 1;
+		Lua_push(lua, self->target);
+		lua_geti(lua->state, -1, self->icurrent);
+		if (lua_isnil(lua->state, -1)) {
+			self->icurrent = -1;
+			lua_pop(lua->state, 2);
+			return NULL;
+		}
+		PyObject *ret = Lua_to_python(lua, -1);
+		lua_pop(lua->state, 2);
+		return Py_BuildValue("iN", self->icurrent, ret);
+	}
+	// pairs iterator.
+	if (self->current == NULL)
+		return NULL;
+	Lua_push(lua, self->target);
+	Lua_push(lua, self->current);
+	if (lua_next(lua->state, -2) == 0) {
+		lua_pop(lua->state, 1);
+		Py_DECREF(self->current);
+		self->current = NULL;
+		return NULL;
+	}
+	PyObject *value = Lua_to_python(lua, -1);
+	Py_DECREF(self->current);
+	self->current = Lua_to_python(lua, -2);
+	lua_pop(lua->state, 3);
+	return Py_BuildValue("ON", self->current, value);
+} // }}}
 // }}}
-
-/*
-class Table: # Using Lua tables from Python. {{{
-	'''Python interface to access a lua table.
-	The table is owned by lua; this class only provides a view to it.'''
-
-	def __init__(self, lua, table = None): # {{{
-		'''Create Python handle for Lua table.
-		If the table is not given as an arugment, it must be pushed to
-		the stack before calling this.'''
-		_dprint('creating lua table', 1)
-		self._lua = lua
-		if table is not None:
-			self._lua._push_luatable(table)
-		self._id = luaL_ref(lua->state, LUA_REGISTRYINDEX)
-		for name, impl in self._lua._ops.items():
-			setattr(self, '__' + name + '__', impl)
-	# }}}
-
-# }}}
-*/
 
 // Python-accessible methods.
 PyMethodDef Table_methods[] = { // {{{
@@ -353,11 +519,18 @@ PyMethodDef Table_methods[] = { // {{{
 	{"__ne__", (PyCFunction)ne_method, METH_VARARGS, "Call the ~= operator on the Lua table"},
 	{"__gt__", (PyCFunction)gt_method, METH_VARARGS, "Call the > operator on the Lua table"},
 	{"__ge__", (PyCFunction)ge_method, METH_VARARGS, "Call the >= operator on the Lua table"},
-	{"pop", (PyCFunction)pop_method, METH_VARARGS, "Remove item from Lua table"},
+	{"remove", (PyCFunction)remove_method, METH_VARARGS, "Remove item from Lua table"},
+	{"concat", (PyCFunction)concat_method, METH_VARARGS, "Join items from Lua table into string"},
+	{"insert", (PyCFunction)insert_method, METH_VARARGS, "Insert item into Lua table"},
+	{"unpack", (PyCFunction)unpack_method, METH_VARARGS, "Extract items from Lua table into tuple"},
+	{"move", (PyCFunction)move_method, METH_VARARGS, "Move item from Lua table to other index or table"},
+	{"sort", (PyCFunction)sort_method, METH_VARARGS, "Sort item in Lua table"},
+	{"pairs", (PyCFunction)pairs_method, METH_VARARGS, "Iterate over key-value pairs"},
+	{"ipairs", (PyCFunction)ipairs_method, METH_VARARGS, "Iterate over index-value pairs"},
 	{NULL, NULL, 0, NULL}
 }; // }}}
 
 PyTypeObject *table_type;
-#endif
+PyTypeObject *table_iter_type;
 
 // vim: set foldmethod=marker :

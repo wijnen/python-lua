@@ -173,9 +173,8 @@ However, while this is the consideration behind the functions, there is nothing
 to enforce it. If you want to run large amounts of code with `run()`, or a
 single line computation with `run_file()`, it will work without any problems.
 
-Both `run` and `run_file` accept a `description` argument, which must be a
-string. It is used in error messages. If not provided, the lua code is used as
-a description for `run` and the filename is used for `run_file`.
+The `run` method accept a `description` argument, which must be a string. It is
+used in error messages. If not provided, the lua code is used as a description.
 
 ### Return values
 Both `run()` and `run_file()` can return a value. This is the primary method

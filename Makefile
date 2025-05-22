@@ -5,4 +5,4 @@ test:
 	cd build/lib* && python3 < ../../test.py
 
 clean:
-	rm -r build/
+	rm -rf build/
