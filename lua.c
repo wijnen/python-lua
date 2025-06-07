@@ -165,15 +165,12 @@ static int metamethod(lua_State *state) { // {{{
 		PyErr_Clear();
 		if (value == NULL) {
 			// Attempt getattr.
-			printf("get attr ");
-			PyObject_Print(target, stdout, 0);
-			printf("[");
-			PyObject_Print(key, stdout, 0);
-			printf("]\n");
-			value = PyObject_GetAttr(target, key);
+			Py_ssize_t len = 0;
+			char const *str = PyUnicode_AsUTF8AndSize(key, &len);
+			if (len > 0 && str[0] != '_')
+				value = PyObject_GetAttr(target, key);
 			PyErr_Clear();
 			if (value == NULL) {
-				fprintf(stderr, "getattr fail\n");
 				Py_DECREF(key);
 				fprintf(stderr, "Failed to get item.\n");
 				return 0;
