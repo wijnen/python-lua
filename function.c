@@ -22,10 +22,11 @@ PyObject *Function_create(Lua *context) { // {{{
 	Function *self = (Function *)(function_type->tp_alloc(function_type, 0));
 	if (!self)
 		return NULL;
-	self->lua = (Lua *)context;
+	self->lua = context;
 	Py_INCREF((PyObject *)(self->lua));
 
-	// Wrap function at top of lua stack, which must have been pushed before calling this.
+	// Wrap function at top of lua stack,
+	// which must have been pushed before calling this.
 	self->id = luaL_ref(self->lua->state, LUA_REGISTRYINDEX);
 
 	return (PyObject *)self;
@@ -38,7 +39,8 @@ void Function_dealloc(Function *self) { // {{{
 	function_type->tp_free((PyObject *)self);
 } // }}}
 
-PyObject *Function_call(Function *self, PyObject *args, PyObject *keywords) { // {{{
+PyObject *Function_call(Function *self, PyObject *args,
+		PyObject *keywords) { // {{{
 
 	// Parse keep_single argument. {{{
 	bool keep_single = false;
@@ -75,25 +77,7 @@ PyObject *Function_call(Function *self, PyObject *args, PyObject *keywords) { //
 	// }}}
 
 	// Call function.
-	lua_call(self->lua->state, nargs, LUA_MULTRET);
-
-	// Build return tuple. {{{
-	Py_ssize_t size = lua_gettop(self->lua->state) - pos;
-	if (!keep_single && size < 2) {
-		if (size == 0)
-			Py_RETURN_NONE;
-		// Size is 1.
-		return Lua_to_python(self->lua, -1);
-	}
-	PyObject *ret = PyTuple_New(size);
-	for (int i = 0; i < size; ++i) {
-		PyObject *value = Lua_to_python(self->lua, -size + i);	// New reference.
-		PyTuple_SET_ITEM(ret, i, value);	// Steal reference.
-	}
-	// }}}
-
-	lua_settop(self->lua->state, pos);
-	return ret;
+	return Lua_run_code(self->lua, pos, keep_single, nargs);
 } // }}}
 
 PyObject *Function_repr(PyObject *self) { // {{{

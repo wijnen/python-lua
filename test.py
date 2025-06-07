@@ -4,57 +4,147 @@ import lua
 # Setup.
 import lua
 code = lua.Lua()
-code.run('python = require("python")')  # If you want to use it.
 
-# Define a Python function.
-def pyfun(arg):
-        print("Python function called with arg '%s'." % arg)
+# Set up a complex type which is wrapped and supports many operators.
+code.set('p', complex(1,2))
 
-# Define a Lua function.
-code.run('''function luafun(arg) print("Lua function called with arg '" .. arg .. "'.") end''')
+# Set up a Python list.
+code.set('a', ['a', 'b', 'c', 'd'])
 
-# Make the Lua function accessible to Python (this could have been done in one step).
-luafun = code.run('return luafun')
+# Set up a Python function.
+def m(a, b):
+	print('function called')
+	return 'A: %s, B: %s' % (a, b)
+code.set('m', m)
+code.run('m(1,2)')
 
-# Make the Python function accessible to Lua.
-code.set('pyfun', pyfun)
+# Set up a custom Python class for operators that cannot be tested otherwise.
+class foo:
+	def __mod__(self, other):
+		return 'moddy %s' % other
+	def __floordiv__(self, other):
+		return '\\div %s' % other
+	def __and__(self, other):
+		return 'and %s' % other
+	def __or__(self, other):
+		return 'or %s' % other
+	def __xor__(self, other):
+		return 'xor %s' % other
+	def __lshift__(self, other):
+		return '<< %s' % other
+	def __rshift__(self, other):
+		return '>> %s' % other
+	def __le__(self, other):
+		return '<= %s' % other
+	def __eq__(self, other):
+		return '== %s' % other
+	def __lt__(self, other):
+		return '< %s' % other
+	def __invert__(self):
+		return '!!'
+	def __len__(self):
+		return 18
+code.set('foo', foo())
 
-# Run the Lua function from Python.
-luafun('from Python')
+# Test running Python operators from Lua.
+meta, f = code.run('''
+	python = require("python")
+	-- Set up a Lua table.
+	nn = {4, "x", y = 5}
+	print('1+2j + 1 = ' .. (p + 1))
+	print('1+2j - 1 = ' .. (p - 1))
+	print('1+2j * 2 = ' .. (p * 2))
+	print('1+2j / 2 = ' .. (p / 2))
+	print('foo % 2 = ' .. (foo % 2))
+	print('1+2j ^ 2 = ' .. (p ^ 2))
+	print('foo // 2 = ' .. (foo // 2))
+	print('foo & 2 = ' .. (foo & 2))
+	print('foo | 2 = ' .. (foo | 2))
+	print('foo << 2 = ' .. (foo << 2))
+	print('foo >> 2 = ' .. (foo >> 2))
+	print('1+2j .. 2 = ' .. (p .. 2))
+	print('foo ~ 2 = ' .. (foo ~ 2))
+	print('1+2j == 2 = ' .. tostring(p == 2))
+	print('foo < 2 = ' .. tostring(foo < 2))
+	print('foo <= 2 = ' .. tostring(foo <= 2))
+	print('-(1+2j) = ' .. -p)
+	print('~foo = ' .. ~foo)
+	print('#foo = ' .. #foo)
+	print('a[2]="x"')
+	a[2] = "x"
+	print(a)
+	print('a[2] = ' .. a[2])
+	print('m(1+2j, nn) = ')
+	print(m(p, nn))
+	print('tostring(1+2j) = ' .. tostring(p))
 
-# Run the Python function from Lua.
-code.run('pyfun("from Lua")')
+	-- Now test calls from python to lua.
+	meta = {
+		__add = function(self, other) return "add" .. other end,
+		__sub = function(self, other) return "sub" .. other end,
+		__mul = function(self, other) return "mul" .. other end,
+		__div = function(self, other) return "div" .. other end,
+		__mod = function(self, other) return "mod" .. other end,
+		__pow = function(self, other) return "pow" .. other end,
+		__idiv = function(self, other) return "idiv" .. other end,
+		__band = function(self, other) return "band" .. other end,
+		__bor = function(self, other) return "bor" .. other end,
+		__bxor = function(self, other) return "bxor" .. other end,
+		__shl = function(self, other) return "shl" .. other end,
+		__shr = function(self, other) return "shr" .. other end,
+		__concat = function(self, other) return "concat" .. other end,
+		__eq = function(self, other) return true end,
+		__lt = function(self, other) return false end,
+		__le = function(self, other) return false end,
+		__unm = function(self) return "unm" end,
+		__bnot = function(self) return "bnot" end,
+		__len = function(self) return rawlen(self) + 2 end,
+		__index = function(self, key) return key * 2 end,
+		__newindex = function(self, key, value)
+			rawset(self, key, value * 3)
+		end,
+	}
+	function f(a, b, c) return a .. b .. c end
+	setmetatable(nn, meta)
+	return nn, f
+''')
 
-# Create Python compound objects from Lua.
-print(type(code.run('return {1, 2, 3}')))       # Lua table (not a Python object)
-print(type(code.run('return python.list{1,2,3}')))      # Python list
-print(type(code.run('return python.dict{foo = "bar"}')))        # Python dict
+print('add', meta + 3)
+print('sub', meta - 3)
+print('mul', meta * 3)
+print('div', meta / 3)
+print('mod', meta % 3)
+print('pow', meta ** 3)
+print('idiv', meta // 3)
+print('and', meta & 3)
+print('or', meta | 3)
+print('xor', meta ^ 3)
+print('shl', meta << 3)
+print('shr', meta >> 3)
+print('concat', meta @ 3)
+print('eq', meta == 3)
+print('lt', meta < 3)
+print('le', meta <= 3)
+print('unm', -meta)
+print('bnot', ~meta)
+print('len', len(meta))
+print('index', meta[3])
+meta[4] = 5
+print('str after newindex', str(meta.list()))
+print('call', f(19, 'x', 'kk'))
 
-# Lua strings that are passed to Python must be UTF-8 encoded and are treated as str.
-print(repr(code.run('return "Unicode"')))
+# Test getattr from Lua __index.
+code.run('a.append(43) print(a)')
 
-# A bytes object can be created with python.bytes.
-print(repr(code.run('return python.bytes("Binary")')))
+class C:
+	def __init__(self):
+		print('init!')
+	def __del__(self):
+		print('del!')
 
-t = code.run('return {"grape", 24, x = 12, ["-"] = "+"}')
-print(t.concat('/'))
-t.insert("new 1")
-t.insert(2, "new 2")
-print(t.unpack())
-print(t.unpack(3))
-print(t.unpack(2, 3))
-print(t.move(2, 3, 4, code.table()).dict())
-comp = lambda i, j: str(i) < str(j)
-c = code.run('return function (i, j) return foo(i, j) end', var = 'foo', value = comp)
-t.sort(c)
-print(t.dict())
-t = code.table(12, 7, 333, -18)
-t.sort()
-print(t.dict())
-t = code.table('12', '7', '333', '-18', foo = 27)
-t.sort()
-print(t.dict())
-for k, v in t.pairs():
-	print('pair item', k, '=', v)
-for k, v in t.ipairs():
-	print('ipair item', k, '=', v)
+def x():
+	c = C()
+	code.set('c', c)
+	code.run('c = nil collectgarbage()')
+
+x()

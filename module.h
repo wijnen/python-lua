@@ -96,7 +96,7 @@ typedef int bool;
 #define false 0
 
 enum Operator { // {{{
-	// Operators using the default metamethod.
+	// Binary operators.
 	ADD,
 	SUB,
 	MUL,
@@ -114,27 +114,25 @@ enum Operator { // {{{
 	LT,
 	LE,
 
-	// Treated as a normal metamethod, but not special for Python.
+	// Unary operators
 	CLOSE,
-#define LAST_DEFAULT_METAMETHOD_OPERATOR CLOSE
-
-	// Operators with a custom metamethod
 	NEG,
 	NOT,
 	LEN,
-	GETITEM,
-	SETITEM,
+	TOSTRING,
 
-	// Not a typical operator, but useful to define as such.
-	STR,
+	INDEX,
+	NEWINDEX,
+	CALL,
 
 	NUM_OPERATORS
 }; // }}}
 
 struct OperatorMap { // {{{
-	char const *python_name;
 	char const *lua_name;
 	char const *lua_operator;
+	PyObject *(*python_binary)(PyObject *lhs, PyObject *rhs);
+	PyObject *(*python_unary)(PyObject *arg);
 }; // }}}
 
 extern struct OperatorMap operators[NUM_OPERATORS];
@@ -209,12 +207,31 @@ typedef struct Table { // {{{
 
 // Construct new table from value at top of stack.
 PyObject *Table_create(Lua *context);
-void Table_dealloc(Table *self);
+void Table_dealloc(PyObject *self);
 PyObject *Table_repr(PyObject *self);
-Py_ssize_t Table_len(Table *self);
-PyObject *Table_getitem(Table *self, PyObject *key);
-int Table_setitem(Table *self, PyObject *key, PyObject *value);
-PyObject *table_list_method(Table *self, PyObject *args);
+Py_ssize_t Table_len(PyObject *self);
+PyObject *Table_getitem(PyObject *self, PyObject *key);
+PyObject *Table_call(PyObject *self, PyObject *args, PyObject *kwargs);
+PyObject *Table_contains(PyObject *self, PyObject *args);
+PyObject *Table_add(PyObject *self, PyObject *args);
+PyObject *Table_iadd(PyObject *self, PyObject *args);
+PyObject *Table_sub(PyObject *self, PyObject *args);
+PyObject *Table_mul(PyObject *self, PyObject *args);
+PyObject *Table_div(PyObject *self, PyObject *args);
+PyObject *Table_mod(PyObject *self, PyObject *args);
+PyObject *Table_power(PyObject *self, PyObject *args);
+PyObject *Table_idiv(PyObject *self, PyObject *args);
+PyObject *Table_and(PyObject *self, PyObject *args);
+PyObject *Table_or(PyObject *self, PyObject *args);
+PyObject *Table_xor(PyObject *self, PyObject *args);
+PyObject *Table_lshift(PyObject *self, PyObject *args);
+PyObject *Table_rshift(PyObject *self, PyObject *args);
+PyObject *Table_concat(PyObject *self, PyObject *args);
+PyObject *Table_richcompare(PyObject *self, PyObject *args, int op);
+PyObject *Table_neg(PyObject *self, PyObject *args);
+PyObject *Table_not(PyObject *self, PyObject *args);
+int Table_setitem(PyObject *self, PyObject *key, PyObject *value);
+PyObject *table_list_method(PyObject *self, PyObject *args);
 extern PyMethodDef Table_methods[];
 
 // Class to iterate over table elements.
@@ -238,5 +255,8 @@ void Table_iter_dealloc(TableIter *self);
 PyObject *Table_iter_repr(PyObject *self);
 PyObject *Table_iter_iter(PyObject *self);
 PyObject *Table_iter_iternext(TableIter *self);
+
+// For internal use only.
+PyObject *Lua_run_code(Lua *self, int pos, bool keep_single, int nargs);
 
 // vim: set foldmethod=marker :
