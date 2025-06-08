@@ -690,14 +690,31 @@ static PyObject *Lua_set(Lua *self, PyObject *args) { // {{{
 } // }}}
 
 static PyObject *Lua_run(Lua *self, PyObject *args, PyObject *keywords) { // {{{
-	char const *code;
+	PyObject *code_obj;
 	char const *description = NULL;
 	bool keep_single = false;
 	char const *var = NULL;
 	PyObject *value = NULL;
-	char const *keywordnames[] = {"code", "description", "var", "value", "keep_single", NULL};
-	if (!PyArg_ParseTupleAndKeywords(args, keywords, "s|ssOp", (char **)keywordnames, &code, &description, &var, &value, &keep_single))
+	char const *keywordnames[] = {"code", "description", "var", "value",
+		"keep_single", NULL};
+	if (!PyArg_ParseTupleAndKeywords(args, keywords, "O|ssOp",
+				(char **)keywordnames,
+				&code_obj,
+				&description,
+				&var,
+				&value,
+				&keep_single))
 		return NULL;
+	Py_ssize_t len = 0;
+	const char *code;
+	if (PyBytes_Check(code_obj)) {
+		PyBytes_AsStringAndSize(code_obj, (char **)&code, &len);
+	} else if (PyUnicode_Check(code_obj)) {
+		code = PyUnicode_AsUTF8AndSize(code_obj, &len);
+	} else {
+		PyErr_SetString(PyExc_ValueError, "code must be str or bytes");
+		return NULL;
+	}
 	if (!description)
 		description = code;
 	if (var || value) {

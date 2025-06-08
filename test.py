@@ -108,6 +108,7 @@ meta, f = code.run('''
 	setmetatable(nn, meta)
 	return nn, f
 ''')
+code.run(b'print("running bytes object with non-utf-8: \x88")')
 
 print('add', meta + 3)
 print('sub', meta - 3)
