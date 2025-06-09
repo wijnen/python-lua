@@ -1,8 +1,10 @@
-python-lua (0.7-1) UNRELEASED; urgency=medium
+python-lua (1.0-1) unstable; urgency=medium
 
+  * New upstream release.
   * Convert code to C++.
+  * Update standards version to 3.7.2. No changes needed.
 
- -- Bas Wijnen <wijnen@debian.org>  Tue, 21 Feb 2023 01:00:08 +0100
+ -- Bas Wijnen <wijnen@debian.org>  Tue, 10 Jun 2025 00:00:16 +0200
 
 python-lua (0.6-1) unstable; urgency=medium
 
