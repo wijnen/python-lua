@@ -212,7 +212,7 @@ PyObject *Table_repr(PyObject *self);
 Py_ssize_t Table_len(PyObject *self);
 PyObject *Table_getitem(PyObject *self, PyObject *key);
 PyObject *Table_call(PyObject *self, PyObject *args, PyObject *kwargs);
-PyObject *Table_contains(PyObject *self, PyObject *args);
+int Table_contains(PyObject *self, PyObject *value);
 PyObject *Table_add(PyObject *self, PyObject *args);
 PyObject *Table_iadd(PyObject *self, PyObject *args);
 PyObject *Table_sub(PyObject *self, PyObject *args);

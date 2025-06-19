@@ -136,29 +136,32 @@ PyObject *Table_call(PyObject *self_obj, PyObject *args,
 	return Lua_run_code(self->lua, pos, false, n);
 } // }}}
 
-PyObject *Table_contains(PyObject *self_obj, PyObject *args) // {{{
+int Table_contains(PyObject *self_obj, PyObject *value) // {{{
 {
 	Table *self = check(self_obj);
 	if (!self)
-		return NULL;
+		return -1;
 	// Check if the argument exists in the table as a value (not a key).
-	PyObject *value;
-	if (!PyArg_ParseTuple(args, "O", &value))	// borrowed reference.
-		return NULL;
-	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);	// Table pushed.
+
+	// Push Table.
+	lua_rawgeti(self->lua->state, LUA_REGISTRYINDEX, self->id);
+
 	lua_pushnil(self->lua->state);
 	while (lua_next(self->lua->state, -2) != 0) {
 		PyObject *candidate = Lua_to_python(self->lua, -1);
-		if (PyObject_RichCompareBool(value, candidate, Py_EQ)) {
-			lua_pop(self->lua->state, 3);
-			Py_DECREF(candidate);
-			Py_RETURN_TRUE;
-		}
+		int cmp = PyObject_RichCompareBool(value, candidate, Py_EQ);
 		Py_DECREF(candidate);
+		if (cmp == 1) {
+			lua_pop(self->lua->state, 3);
+			return 1;
+		} else if (cmp == -1) {
+			lua_pop(self->lua->state, 3);
+			return -1;
+		}
 		lua_pop(self->lua->state, 1);
 	}
 	lua_pop(self->lua->state, 1);
-	Py_RETURN_FALSE;
+	return 0;
 } // }}}
 
 static PyObject *Table_binary_operator(PyObject *self_obj, PyObject *value,

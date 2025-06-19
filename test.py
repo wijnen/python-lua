@@ -149,3 +149,7 @@ def x():
 	code.run('c = nil collectgarbage()')
 
 x()
+
+a = code.run('a = {3, 5} return a')
+print('in', 5 in a, 4 in a)
+print('not in', 4 not in a, 5 not in a)
