@@ -15,6 +15,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  * }}} */
 
+#define DEBUG_ITER
 #include "module.h"
 
 static Table *check(PyObject *table) // {{{
@@ -27,16 +28,40 @@ static Table *check(PyObject *table) // {{{
 	return (Table *)table;
 } // }}}
 
-PyObject *Table_create(Lua *context) // {{{
+static void setup_table(Table *self, Lua *context) // {{{
 {
-	Table *self = (Table *)(table_type->tp_alloc(table_type, 0));
-	if (!self)
-		return NULL;
 	self->lua = context;
 	Py_INCREF(self->lua);
 	self->id = luaL_ref(self->lua->state, LUA_REGISTRYINDEX);
-	//fprintf(stderr, "alloc table %p\n", self);
+} // }}}
+
+PyObject *Table_create(Lua *context) // {{{
+{
+	Table *self = PyObject_GC_New(Table, table_type);
+	setup_table(self, context);
 	return (PyObject *)self;
+} // }}}
+
+int Table_init(PyObject *py_self, PyObject *args, PyObject *kwargs) // {{{
+{
+	if (!PyObject_IsInstance(py_self, (PyObject *)table_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"Table init called on wrong type");
+		return -1;
+	}
+	Table *self = (Table *)py_self;
+	// The only argument must be a Lua object.
+	PyObject *py_parent;
+	if (!PyArg_ParseTuple(args, "O", &py_parent))
+		return -1;
+	if (!PyObject_IsInstance(py_parent, (PyObject *)Lua_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"Table init requires a lua object");
+		return -1;
+	}
+	setup_table(self, (Lua *)py_parent);
+	//fprintf(stderr, "alloc table %p\n", self);
+	return 0;
 }; // }}}
 
 // Destructor.
@@ -47,7 +72,7 @@ void Table_dealloc(PyObject *self_obj) { // {{{
 		return;
 	luaL_unref(self->lua->state, LUA_REGISTRYINDEX, self->id);
 	Py_DECREF(self->lua);
-	table_type->tp_free((PyObject *)self);
+	table_type->tp_free(self_obj);
 } // }}}
 
 // Methods.
@@ -221,7 +246,7 @@ PyObject *Table_mod(PyObject *self_obj, PyObject *args)
 	{ return Table_binary_operator(self_obj, args, MOD); }
 PyObject *Table_div(PyObject *self_obj, PyObject *args)
 	{ return Table_binary_operator(self_obj, args, DIV); }
-PyObject *Table_power(PyObject *self_obj, PyObject *args)
+PyObject *Table_power(PyObject *self_obj, PyObject *args, PyObject * /*mod*/)
 	{ return Table_binary_operator(self_obj, args, POW); }
 PyObject *Table_idiv(PyObject *self_obj, PyObject *args)
 	{ return Table_binary_operator(self_obj, args, IDIV); }
@@ -238,9 +263,9 @@ PyObject *Table_rshift(PyObject *self_obj, PyObject *args)
 PyObject *Table_concat(PyObject *self_obj, PyObject *args)
 	{ return Table_binary_operator(self_obj, args, CONCAT); }
 
-PyObject *Table_neg(PyObject *self_obj, PyObject * /*args*/)
+PyObject *Table_neg(PyObject *self_obj)
 	{ return Table_unary_operator(self_obj, NEG); }
-PyObject *Table_not(PyObject *self_obj, PyObject * /*args*/)
+PyObject *Table_not(PyObject *self_obj)
 	{ return Table_unary_operator(self_obj, NOT); }
 
 PyObject *Table_iadd(PyObject *self_obj, PyObject *args) // {{{
@@ -388,6 +413,7 @@ static PyObject *dict_method(PyObject *self, PyObject *args) // {{{
 	lua_rawgeti(target->lua->state, LUA_REGISTRYINDEX, target->id);
 	lua_pushnil(target->lua->state);
 	while (lua_next(target->lua->state, -2) != 0) {
+		Lua_dump_stack(target->lua);
 		PyObject *key = Lua_to_python(target->lua, -2);
 		PyObject *value = Lua_to_python(target->lua, -1);
 		bool fail = PyDict_SetItem(ret, key, value) < 0;
@@ -589,15 +615,16 @@ static PyObject *ipairs_method(PyObject *self_obj, PyObject *args) // {{{
 
 // Iterator methods. {{{
 PyObject *Table_iter_create(PyObject *target, bool is_ipairs) { // {{{
-	TableIter *self = (TableIter *)
-		(table_iter_type->tp_alloc(table_iter_type, 0));
+	TableIter *self = PyObject_GC_New(TableIter, table_iter_type);
 	if (!self)
 		return NULL;
 	self->target = target;
 	Py_INCREF(self);
 	Py_INCREF(target);
-	//fprintf(stderr, "new iter %p %p refcnt %ld, %ld\n", target, self,
-	//		Py_REFCNT((PyObject *)self), Py_REFCNT(target));
+#ifdef DEBUG_ITER
+	fprintf(stderr, "new iter %p %p refcnt %ld, %ld\n", target, self,
+			Py_REFCNT((PyObject *)self), Py_REFCNT(target));
+#endif
 	self->is_ipairs = is_ipairs;
 	if (is_ipairs) {
 		self->current = NULL;
@@ -609,8 +636,11 @@ PyObject *Table_iter_create(PyObject *target, bool is_ipairs) { // {{{
 	return (PyObject *)self;
 } // }}}
 
-void Table_iter_dealloc(TableIter *self) { // {{{
-	//fprintf(stderr, "dealloc iter %p / %p\n", self, self->target);
+void Table_iter_dealloc(PyObject *py_self) { // {{{
+	TableIter *self = (TableIter *)py_self;
+#ifdef DEBUG_ITER
+	fprintf(stderr, "dealloc iter %p / %p\n", self, self->target);
+#endif
 	if (self->target != NULL)
 		Py_DECREF(self->target);
 	if (self->current != NULL)
@@ -625,18 +655,22 @@ PyObject *Table_iter_repr(PyObject *self) { // {{{
 } // }}}
 
 PyObject *Table_iter_iter(PyObject *self) { // {{{
-	//fprintf(stderr, "iter %p\n", self);
+#ifdef DEBUG_ITER
+	fprintf(stderr, "iter %p\n", self);
+#endif
 	return self;
 } // }}}
 
-PyObject *Table_iter_iternext(TableIter *self) { // {{{
-	//fprintf(stderr, "next iter %p: %ld\n", self, Py_REFCNT(self));
-	//if (!PyObject_IsInstance((PyObject *)self,
-	//			(PyObject *)&table_iter_type)) {
-	//	PyErr_SetString(PyExc_ValueError,
-	//			"self must be a table iterator");
-	//	return NULL;
-	//}
+PyObject *Table_iter_iternext(PyObject *py_self) { // {{{
+#ifdef DEBUG_ITER
+	fprintf(stderr, "next iter %p: %ld\n", py_self, Py_REFCNT(py_self));
+#endif
+	if (!PyObject_IsInstance(py_self, (PyObject *)table_iter_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"self must be a table iterator");
+		return NULL;
+	}
+	TableIter *self = (TableIter *)py_self;
 	Lua *lua = ((Table *)(self->target))->lua;
 	if (self->is_ipairs) {
 		if (self->icurrent < 0)
@@ -671,6 +705,42 @@ PyObject *Table_iter_iternext(TableIter *self) { // {{{
 	return Py_BuildValue("ON", self->current, value);
 } // }}}
 // }}}
+
+// Garbage collection helpers.
+int table_traverse(PyObject *self, visitproc visit, void *arg) // {{{
+{
+	PyObject_VisitManagedDict((PyObject*)self, visit, arg);
+	Table *table = (Table *)self;
+	Py_VISIT(table->lua);
+	return 0;
+} // }}}
+
+int table_iter_traverse(PyObject *self, visitproc visit, void *arg) // {{{
+{
+	PyObject_VisitManagedDict((PyObject*)self, visit, arg);
+	TableIter *iter = (TableIter *)self;
+	Py_VISIT(iter->target);
+	Py_VISIT(iter->current);
+	return 0;
+} // }}}
+
+int table_clear(PyObject *self) // {{{
+{
+	PyObject_ClearManagedDict(self);
+	Table *table = (Table *)self;
+	Py_CLEAR(table->lua);
+	return 0;
+} // }}}
+
+int table_iter_clear(PyObject *self) // {{{
+{
+	PyObject_ClearManagedDict(self);
+	TableIter *iter = (TableIter *)self;
+	Py_CLEAR(iter->target);
+	Py_CLEAR(iter->current);
+	return 0;
+} // }}}
+
 
 // Python-accessible methods.
 PyMethodDef Table_methods[] = { // {{{

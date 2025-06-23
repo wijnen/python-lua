@@ -19,28 +19,63 @@
 
 // Create new Function from value at top of stack.
 PyObject *Function_create(Lua *context) { // {{{
-	Function *self = (Function *)(function_type->tp_alloc(function_type, 0));
+	Function *self = PyObject_GC_New(Function, function_type);
 	if (!self)
 		return NULL;
-	self->lua = context;
+
+	return (PyObject *)self;
+}; // }}}
+
+// Initialization.
+int Function_init(PyObject *py_self, PyObject *args, PyObject *kwargs) // {{{
+{
+	if (!PyObject_IsInstance(py_self, (PyObject *)function_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"Function init called on wrong type");
+		return -1;
+	}
+	Function *self = (Function *)py_self;
+	// The only argument must be a Lua object.
+	PyObject *py_parent;
+	if (!PyArg_ParseTuple(args, "O", &py_parent))
+		return -1;
+	if (!PyObject_IsInstance(py_parent, (PyObject *)Lua_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"Function init requires a lua object");
+		return -1;
+	}
+	self->lua = (Lua *)py_parent;
 	Py_INCREF((PyObject *)(self->lua));
 
 	// Wrap function at top of lua stack,
 	// which must have been pushed before calling this.
 	self->id = luaL_ref(self->lua->state, LUA_REGISTRYINDEX);
-
-	return (PyObject *)self;
-}; // }}}
-
-// Destructor.
-void Function_dealloc(Function *self) { // {{{
-	luaL_unref(self->lua->state, LUA_REGISTRYINDEX, self->id);
-	Py_DECREF(self->lua);
-	function_type->tp_free((PyObject *)self);
+	PyObject_GC_Track((PyObject *)self);
+	return 0;
 } // }}}
 
-PyObject *Function_call(Function *self, PyObject *args,
+// Destructor.
+void Function_dealloc(PyObject *py_self) { // {{{
+	if (!PyObject_IsInstance(py_self, (PyObject *)function_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"Function init called on wrong type");
+		return;
+	}
+	Function *self = (Function *)py_self;
+	PyObject_GC_UnTrack((PyObject *)self);
+	luaL_unref(self->lua->state, LUA_REGISTRYINDEX, self->id);
+	Py_DECREF(self->lua);
+	PyObject_GC_Del(self);
+} // }}}
+
+PyObject *Function_call(PyObject *py_self, PyObject *args,
 		PyObject *keywords) { // {{{
+	if (!PyObject_IsInstance(py_self, (PyObject *)function_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"Function init called on wrong type");
+		return NULL;
+	}
+	Function *self = (Function *)py_self;
 
 	// Parse keep_single argument. {{{
 	bool keep_single = false;
@@ -86,6 +121,23 @@ PyObject *Function_repr(PyObject *self) { // {{{
 	return PyUnicode_DecodeUTF8(str, strlen(str), NULL);
 } // }}}
 // }}}
+
+// Garbage collection helpers.
+int function_traverse(PyObject *self, visitproc visit, void *arg) // {{{
+{
+	PyObject_VisitManagedDict((PyObject*)self, visit, arg);
+	Function *func = (Function *)self;
+	Py_VISIT(func->lua);
+	return 0;
+} // }}}
+
+int function_clear(PyObject *self) // {{{
+{
+	PyObject_ClearManagedDict(self);
+	Function *func = (Function *)self;
+	Py_CLEAR(func->lua);
+	return 0;
+} // }}}
 
 // Python-accessible methods.
 //PyMethodDef function_methods[] = { // {{{

@@ -46,6 +46,41 @@ struct OperatorMap operators[NUM_OPERATORS] = { // {{{
 }; // }}}
 
 // Helper functions. {{{
+static UserdataData *get_data(Lua *self, int index) // {{{
+{
+	return (UserdataData *)lua_touserdata(self->state, index);
+} // }}}
+
+static void make_userdata(Lua *self, PyObject *target) // {{{
+{
+	UserdataData *data =
+		lua_newuserdatauv(self->state, sizeof(UserdataData), 0);
+	data->target = target;
+	data->next = self->first_userdata;
+	data->prev = NULL;
+	if (data->next)
+		data->next->prev = data;
+	self->first_userdata = data;
+	Py_INCREF(target);
+
+	lua_getfield(self->state, LUA_REGISTRYINDEX, "metatable");
+	lua_setmetatable(self->state, -2);
+} // }}}
+
+static void del_userdata(Lua *self, UserdataData *data) // {{{
+{
+	Py_DECREF(data->target);
+	data->target = NULL;
+	if (data->prev)
+		data->prev->next = data->next;
+	else
+		self->first_userdata = data->next;
+	if (data->next)
+		data->next->prev = data->prev;
+	data->prev = NULL;
+	data->next = NULL;
+} // }}}
+
 void Lua_dump_stack(Lua *self) { // {{{
 	int n = lua_gettop(self->state);
 	fprintf(stderr, "***** Lua stack dump *****\n");
@@ -245,16 +280,9 @@ static int gc(lua_State *state) { // {{{
 	Lua *lua = (Lua *)lua_touserdata(state, -1);
 	lua_pop(state, 1);
 
-	PyObject *target = Lua_to_python(lua, 1);
+	UserdataData *data = get_data(lua, 1);
+	del_userdata(lua, data);
 	
-	// Target is a Python object that was accessible to Lua.
-	// The link in Lua is now lost; it is garbage collected there.
-	// This means it should lose its reference.
-	// We have just received a new reference to it from Lua_to_python.
-	// Because of this, we need to drop 2 references.
-	Py_DECREF(target);
-	Py_DECREF(target);
-
 	return 0;
 } // }}}
 
@@ -328,12 +356,15 @@ static PyMethodDef construct_bytes_method = {
 }; // }}}
 // }}}
 
-// Python class Lua __new__ function.
-static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords) { // {{{
-	Lua *self = (Lua *)type->tp_alloc(type, 0);
-	if (!self)
-		return NULL;
-	// Create a new lua object.
+static int Lua_init(PyObject *py_self, PyObject *args, PyObject *keywords)
+{ // {{{
+	if (!PyObject_IsInstance(py_self, (PyObject *)Lua_type)) {
+		PyErr_SetString(PyExc_ValueError,
+				"Lua init called on wrong object");
+		return -1;
+	}
+	Lua *self = (Lua *)py_self;
+	// Initializes a new lua object.
 	// This object provides the interface into the lua library.
 	// It also provides access to all the symbols that lua owns.
 
@@ -347,7 +378,7 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 	bool python_module = true;
 	char const *keywordnames[] = {"debug", "loadlib", "searchers", "doloadfile", "io", "os", "python_module", NULL};
 	if (!PyArg_ParseTupleAndKeywords(args, keywords, "|ppppppp", (char **)keywordnames, &debug, &loadlib, &searchers, &doloadfile, &io, &os, &python_module))
-		return NULL;
+		return -1;
 	// }}}
 
 	// Create new state and store back pointer to self. {{{
@@ -371,19 +402,19 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 	// Unary operators.
 	lua_Integer index = build_wrapper(self, "return function(a) return -a end", NULL, true);
 	if (index == LUA_NOREF)
-		return NULL;
+		return -1;
 	lua_rawgeti(self->state, LUA_REGISTRYINDEX, index);
 	self->lua_operator[NEG] = Function_create(self);
 
 	index = build_wrapper(self, "return function(a) return ~a end", NULL, true);
 	if (index == LUA_NOREF)
-		return NULL;
+		return -1;
 	lua_rawgeti(self->state, LUA_REGISTRYINDEX, index);
 	self->lua_operator[NOT] = Function_create(self);
 
 	index = build_wrapper(self, "return function(a) return tostring(a) end", NULL, true);
 	if (index == LUA_NOREF)
-		return NULL;
+		return -1;
 	lua_rawgeti(self->state, LUA_REGISTRYINDEX, index);
 	self->lua_operator[TOSTRING] = Function_create(self);
 
@@ -407,12 +438,12 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 		// Store binary operators. (Others are stored below this loop.)
 		static const char *template
 			= "return function(a, b) return a %s b end";
-		char buffer[strlen(template) + 2];
+		char buffer[50]; //strlen(template) + 2];
 		sprintf(buffer, template, operators[i].lua_operator);
 		lua_Integer function_id
 			= build_wrapper(self, buffer, NULL, true);
 		if (function_id == LUA_NOREF)
-			return NULL;
+			return -1;
 		lua_rawgeti(self->state, LUA_REGISTRYINDEX, function_id);
 		self->lua_operator[i] = Function_create(self);
 	}
@@ -420,50 +451,50 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 	// Store a copy of some initial values, so they still work if the original value is replaced.
 	self->table_remove = build_wrapper(self, "return table.remove", "get table.remove", true);
 	if (self->table_remove == LUA_NOREF)
-		return NULL;
+		return -1;
 	self->table_concat = build_wrapper(self, "return table.concat", "get table.concat", true);
 	if (self->table_concat == LUA_NOREF)
-		return NULL;
+		return -1;
 	self->table_insert = build_wrapper(self, "return table.insert", "get table.insert", true);
 	if (self->table_insert == LUA_NOREF)
-		return NULL;
+		return -1;
 	self->table_unpack = build_wrapper(self, "return table.unpack", "get table.unpack", true);
 	if (self->table_unpack == LUA_NOREF)
-		return NULL;
+		return -1;
 	self->table_move = build_wrapper(self, "return table.move", "get table.move", true);
 	if (self->table_move == LUA_NOREF)
-		return NULL;
+		return -1;
 	self->table_sort = build_wrapper(self, "return table.sort", "get table.sort", true);
 	if (self->table_sort == LUA_NOREF)
-		return NULL;
+		return -1;
 	self->package_loaded = build_wrapper(self, "return package.loaded", "get package.loaded", true);
 	if (self->package_loaded == LUA_NOREF)
-		return NULL;
+		return -1;
 
 	// Disable optional features that have not been requested. {{{
 	if (!debug) {
 		if (build_wrapper(self, "debug = nil package.loaded.debug = nil", "disabling debug", false) == LUA_NOREF)
-			return NULL;
+			return -1;
 	}
 	if (!loadlib) {
 		if (build_wrapper(self, "package.loadlib = nil", "disabling loadlib", false) == LUA_NOREF)
-			return NULL;
+			return -1;
 	}
 	if (!searchers) {
 		if (build_wrapper(self, "package.searchers = {}", "disabling searchers", false) == LUA_NOREF)
-			return NULL;
+			return -1;
 	}
 	if (!doloadfile) {
 		if (build_wrapper(self, "loadfile = nil dofile = nil", "disabling loadfile and dofile", false) == LUA_NOREF)
-			return NULL;
+			return -1;
 	}
 	if (!os) {
 		if (build_wrapper(self, "os = {clock = os.clock, date = os.date, difftime = os.difftime, setlocale = os.setlocale, time = os.time} package.loaded.os = os", "disabling some of os", false) == LUA_NOREF)
-			return NULL;
+			return -1;
 	}
 	if (!io) {
 		if (build_wrapper(self, "io = nil package.loaded.io = nil", "disabling io", false) == LUA_NOREF)
-			return NULL;
+			return -1;
 	}
 	// }}}
 
@@ -486,11 +517,12 @@ static PyObject *Lua_new(PyTypeObject *type, PyObject *args, PyObject *keywords)
 		// }}}
 	}
 
-	return (PyObject *)self;
+	return 0;
 } // }}}
 
 // Destructor.
-static void Lua_dealloc(Lua *self) { // {{{
+static void Lua_dealloc(PyObject *py_self) { // {{{
+	Lua *self = (Lua *)py_self;
 	lua_close(self->state);
 	Lua_type->tp_free((PyObject *)self);
 } // }}}
@@ -599,42 +631,51 @@ void lua_load_module(Lua *self, char const *name, PyObject *dict) { // {{{
 // load variable from lua stack into python.
 PyObject *Lua_to_python(Lua *self, int index) { // {{{
 	int type = lua_type(self->state, index);
+	PyObject *ret;
+	PyGILState_STATE state = PyGILState_Ensure();
 	switch(type) {
 	case LUA_TNIL:
 		Py_RETURN_NONE;
 	case LUA_TBOOLEAN:
-		return PyBool_FromLong(lua_toboolean(self->state, index));
+		ret = PyBool_FromLong(lua_toboolean(self->state, index));
+		break;
 	//case LUA_TLIGHTUSERDATA: // Not used.
 	//	return lua_touserdata(self->state, index)
 	case LUA_TNUMBER:
 	{
 		// If this is exactly an integer, return it as an integer.
 		lua_Integer iret = lua_tointeger(self->state, index);
-		lua_Number ret = lua_tonumber(self->state, index);
-		if ((lua_Number)iret == ret)
-			return PyLong_FromLongLong(iret);
-		return PyFloat_FromDouble(ret);
+		lua_Number fret = lua_tonumber(self->state, index);
+		if ((lua_Number)iret == fret)
+			ret = PyLong_FromLongLong(iret);
+		else
+			ret = PyFloat_FromDouble(fret);
+		break;
 	}
 	case LUA_TSTRING:
 	{
 		size_t len;
 		char const *str = lua_tolstring(self->state, index, &len);
-		return PyUnicode_DecodeUTF8(str, len, NULL);
+		//printf("str: %*s\n", (int)len, str);
+		ret = PyUnicode_DecodeUTF8(str, len, NULL);
+		break;
 	}
 	case LUA_TTABLE:
 		lua_pushvalue(self->state, index);
-		return Table_create(self);
+		ret = Table_create(self);
+		break;
 	case LUA_TFUNCTION:
 		lua_pushvalue(self->state, index);
-		return Function_create(self);
+		ret = Function_create(self);
+		break;
 	case LUA_TUSERDATA:
 	{
 		// This is a Python-owned object that was used by Lua.
 		// The data block of the userdata stores the PyObject *.
-		PyObject *ret
-			= *(PyObject **)lua_touserdata(self->state, index);
+		UserdataData *data = get_data(self, index);
+		ret = data->target;
 		Py_INCREF(ret);
-		return ret;
+		break;
 	}
 	//case LUA_TTHREAD: // Not used.
 	//	return lua_tothread(self->state, index)
@@ -642,8 +683,13 @@ PyObject *Lua_to_python(Lua *self, int index) { // {{{
 		//if (lua_iscfunction(self->state, index)) {
 		//	return lua_tocfunction(self->state, index)
 		//}
-		return PyErr_Format(PyExc_ValueError, "Invalid type %x passed to Lua_to_python", type);
+		ret = PyErr_Format(PyExc_ValueError,
+				"Invalid type %x passed to Lua_to_python",
+				type);
+		break;
 	}
+	PyGILState_Release(state);
+	return ret;
 } // }}}
 
 // load variable from python onto lua stack.
@@ -668,14 +714,28 @@ void Lua_push(Lua *self, PyObject *obj) { // {{{
 	} else if (PyFloat_Check(obj)) {
 		lua_pushnumber(self->state, PyFloat_AsDouble(obj));
 	} else {
-		*(PyObject **)lua_newuserdatauv(self->state,
-				sizeof(PyObject *), 0) = obj;
-		Py_INCREF(obj);
-		// The gc metamethod is used to DECREF the object.
-
-		lua_getfield(self->state, LUA_REGISTRYINDEX, "metatable");
-		lua_setmetatable(self->state, -2);
+		make_userdata(self, obj);
 	}
+} // }}}
+
+int Lua_traverse(PyObject *py_self, visitproc visit, void *arg) // {{{
+{
+	PyObject_VisitManagedDict(py_self, visit, arg);
+	// Visit every userdata.
+	Lua *self = (Lua *)py_self;
+	for (UserdataData *data = self->first_userdata; data; data = data->next)
+		Py_VISIT(data->target);
+	return 0;
+} // }}}
+
+int Lua_clear(PyObject *py_self) // {{{
+{
+	PyObject_ClearManagedDict(py_self);
+	// Clear every userdata.
+	Lua *self = (Lua *)py_self;
+	for (UserdataData *data = self->first_userdata; data; data = data->next)
+		Py_CLEAR(data->target);
+	return 0;
 } // }}}
 
 // Type definition.
@@ -773,149 +833,166 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 		.m_clear = NULL,
 		.m_free = NULL,
 	}; // }}}
+
 	static PyMethodDef Lua_methods[] = { // {{{
 		{"set", (PyCFunction)Lua_set, METH_VARARGS, "Set a variable"},
-		{"run", (PyCFunction)Lua_run, METH_VARARGS | METH_KEYWORDS, "Run a Lua script"},
-		{"run_file", (PyCFunction)Lua_run_file, METH_VARARGS | METH_KEYWORDS, "Run a Lua script from a file"},
-		{"module", (PyCFunction)Lua_module, METH_VARARGS, "Import a module into Lua"},
-		{"table", (PyCFunction)Lua_table, METH_VARARGS | METH_KEYWORDS, "Create a Lua Table"},
+		{"run", (PyCFunction)Lua_run, METH_VARARGS | METH_KEYWORDS,
+			"Run a Lua script"},
+		{"run_file", (PyCFunction)Lua_run_file,
+			METH_VARARGS | METH_KEYWORDS,
+			"Run a Lua script from a file"},
+		{"module", (PyCFunction)Lua_module, METH_VARARGS,
+			"Import a module into Lua"},
+		{"table", (PyCFunction)Lua_table, METH_VARARGS | METH_KEYWORDS,
+			"Create a Lua Table"},
 		{NULL, NULL, 0, NULL}
 	}; // }}}
-	static PyType_Slot lua_slots[] = { // {{{
-		{ Py_tp_new, Lua_new },
-		{ Py_tp_dealloc, Lua_dealloc },
+	static PyType_Slot Lua_slots[] = { // {{{
+		{ Py_tp_traverse, &Lua_traverse },
+		{ Py_tp_clear, &Lua_clear },
+		{ Py_tp_init, &Lua_init },
+		{ Py_tp_dealloc, &Lua_dealloc },
 		{ Py_tp_doc, "Hold Lua object state" },
 		{ Py_tp_methods, Lua_methods },
-		{ 0, NULL },
+		{ 0, NULL }
 	}; // }}}
-	static PyType_Spec *LuaType; // {{{
-	LuaType = malloc(sizeof(*LuaType));
-	memset(LuaType, 0, sizeof(*LuaType));
-	LuaType->name = "lua.Lua";
-	LuaType->basicsize = sizeof(Lua);
-	LuaType->itemsize = 0;
-	LuaType->flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HEAPTYPE;
-	LuaType->slots = lua_slots;
-	// }}}
-	static PyType_Slot function_slots[] = { // {{{
-		//{ Py_tp_new, NULL },
-		{ Py_tp_dealloc, Function_dealloc },
-		{ Py_tp_doc, "Access a Lua-owned function from Python" },
-		{ Py_tp_call, Function_call },
-		{ Py_tp_repr, Function_repr },
-		{ 0, NULL },
-	}; // }}}
-	static PyType_Spec *FunctionType; // {{{
-	FunctionType = malloc(sizeof(*FunctionType));
-	memset(FunctionType, 0, sizeof(*FunctionType));
-	FunctionType->name = "lua.Function";
-	FunctionType->basicsize = sizeof(Function);
-	FunctionType->itemsize = 0;
-	FunctionType->flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HEAPTYPE;
-	FunctionType->slots = function_slots;
-	// }}}
-	static PyType_Slot table_slots[] = { // {{{
-		{ Py_tp_dealloc, Table_dealloc },
-		{ Py_tp_doc, "Access a Lua-owned table from Python" },
-		{ Py_tp_repr, Table_repr },
-		{ Py_tp_str, Table_repr },
-		{ Py_tp_richcompare, Table_richcompare },
-		{ Py_mp_length, Table_len },
-		{ Py_mp_subscript, Table_getitem },
-		{ Py_mp_ass_subscript, Table_setitem },
-		{ Py_tp_call, Table_call },
-		{ Py_sq_contains, Table_contains },
-		{ Py_tp_methods, Table_methods },
-		{ Py_nb_add, Table_add },
-		{ Py_nb_inplace_add, Table_iadd },
-		{ Py_nb_subtract, Table_sub },
-		{ Py_nb_multiply, Table_mul },
-		{ Py_nb_true_divide, Table_div },
-		{ Py_nb_remainder, Table_mod },
-		{ Py_nb_power, Table_power },
-		{ Py_nb_floor_divide, Table_idiv },
-		{ Py_nb_and, Table_and },
-		{ Py_nb_or, Table_or },
-		{ Py_nb_xor, Table_xor },
-		{ Py_nb_lshift, Table_lshift },
-		{ Py_nb_rshift, Table_rshift },
-		{ Py_nb_matrix_multiply, Table_concat },
-		{ Py_nb_negative, Table_neg },
-		{ Py_nb_invert, Table_not },
-		{ 0, NULL },
-	}; // }}}
-	static PyType_Spec *TableType; // {{{
-	TableType = malloc(sizeof(*TableType));
-	memset(TableType, 0, sizeof(*TableType));
-	TableType->name = "lua.Table";
-	TableType->basicsize = sizeof(Table);
-	TableType->itemsize = 0;
-	TableType->flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HEAPTYPE;
-	TableType->slots = table_slots;
-	// }}}
-	static PyType_Slot table_iter_slots[] = { // {{{
-		{ Py_tp_dealloc, Table_iter_dealloc },
-		{ Py_tp_doc, "iterator for lua.table" },
-		{ Py_tp_repr, Table_iter_repr },
-		{ Py_tp_str, Table_iter_repr },
-		{ Py_tp_iter, Table_iter_iter },
-		{ Py_tp_iternext, Table_iter_iternext },
-		{ 0, NULL },
-	}; // }}}
-	static PyType_Spec *TableIterType; // {{{
-	TableIterType = malloc(sizeof(*TableIterType));
-	memset(TableIterType, 0, sizeof(*TableIterType));
-	TableIterType->name = "lua.Table.iterator";
-	TableIterType->basicsize = sizeof(TableIter);
-	TableIterType->itemsize = 0;
-	TableIterType->flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HEAPTYPE;
-	TableIterType->slots = table_iter_slots;
+	static PyType_Spec Lua_spec = { // {{{
+		.name = "lua.Lua",
+		.basicsize = sizeof(Lua),
+		.itemsize = 0,
+		.flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC
+			| Py_TPFLAGS_MANAGED_DICT | Py_TPFLAGS_HEAPTYPE,
+		.slots = Lua_slots
+	};
 	// }}}
 
-	//fprintf(stderr, "creating module.\n");
+	static PyType_Slot function_slots[] = { // {{{
+		{ Py_tp_traverse, &function_traverse },
+		{ Py_tp_clear, &function_clear },
+		{ Py_tp_init, &Function_init },
+		{ Py_tp_dealloc, &Function_dealloc },
+		{ Py_tp_doc, "Access a Lua-owned function from Python" },
+		{ Py_tp_call, &Function_call },
+		{ Py_tp_repr, &Function_repr },
+		{ 0, NULL }
+	}; // }}}
+	static PyType_Spec function_spec = { // {{{
+		.name = "lua.Function",
+		.basicsize = sizeof(Function),
+		.itemsize = 0,
+		.flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+			Py_TPFLAGS_MANAGED_DICT | Py_TPFLAGS_HEAPTYPE,
+		.slots = function_slots
+	}; // }}}
+
+	static PyType_Slot table_slots[] = { // {{{
+		{ Py_tp_traverse, &table_traverse },
+		{ Py_tp_clear, &table_clear },
+		{ Py_tp_init, &Table_init },
+		{ Py_tp_dealloc, &Table_dealloc },
+		{ Py_tp_doc, "Access a Lua-owned table from Python" },
+		{ Py_tp_repr, &Table_repr },
+		{ Py_tp_str, &Table_repr },
+		{ Py_tp_richcompare, &Table_richcompare },
+		{ Py_tp_call, &Table_call },
+		{ Py_tp_methods, &Table_methods },
+		{ Py_nb_add, &Table_add },
+		{ Py_nb_inplace_add, &Table_iadd },
+		{ Py_nb_subtract, &Table_sub },
+		{ Py_nb_multiply, &Table_mul },
+		{ Py_nb_true_divide, &Table_div },
+		{ Py_nb_remainder, &Table_mod },
+		{ Py_nb_power, &Table_power },
+		{ Py_nb_floor_divide, &Table_idiv },
+		{ Py_nb_and, &Table_and },
+		{ Py_nb_or, &Table_or },
+		{ Py_nb_xor, &Table_xor },
+		{ Py_nb_lshift, &Table_lshift },
+		{ Py_nb_rshift, &Table_rshift },
+		{ Py_nb_matrix_multiply, &Table_concat },
+		{ Py_nb_negative, &Table_neg },
+		{ Py_nb_invert, &Table_not },
+		{ Py_mp_length, &Table_len },
+		{ Py_mp_subscript, &Table_getitem },
+		{ Py_mp_ass_subscript, &Table_setitem },
+		{ Py_sq_contains, &Table_contains },
+		{ 0, NULL }
+	}; // }}}
+	static PyType_Spec table_spec = { // {{{
+		.name = "lua.Table",
+		.basicsize = sizeof(Table),
+		.itemsize = 0,
+		.flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+			Py_TPFLAGS_MANAGED_DICT | Py_TPFLAGS_HEAPTYPE,
+		.slots = table_slots
+	}; // }}}
+
+	static PyType_Slot table_iter_slots[] = { // {{{
+		{ Py_tp_traverse, &table_iter_traverse },
+		{ Py_tp_clear, &table_iter_clear },
+		{ Py_tp_init, &Table_iter_init },
+		{ Py_tp_dealloc, &Table_iter_dealloc },
+		{ Py_tp_doc, "iterator for lua.table" },
+		{ Py_tp_repr, &Table_iter_repr },
+		{ Py_tp_str, &Table_iter_repr },
+		{ Py_tp_iter, &Table_iter_iter },
+		{ Py_tp_iternext, &Table_iter_iternext },
+		{ 0, NULL }
+	}; // }}}
+	static PyType_Spec table_iter_spec = { // {{{
+		.name = "lua.Table.iterator",
+		.basicsize = sizeof(TableIter),
+		.itemsize = 0,
+		.flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC |
+			Py_TPFLAGS_MANAGED_DICT | Py_TPFLAGS_HEAPTYPE,
+		.slots = table_iter_slots,
+	}; // }}}
+
 	PyObject *m = PyModule_Create(&Module);
 	if (!m)
 		return NULL;
 
-	//fprintf(stderr, "creating type lua.\n");
-	Lua_type = (PyTypeObject *)PyType_FromModuleAndSpec(m, LuaType, NULL);
-	if (!Lua_type || PyModule_AddObject(m, "Lua", (PyObject *)Lua_type) < 0) {
-		Py_DECREF(m);
-		return NULL;
-	}
-	Py_INCREF(Lua_type);
+	Lua_type = (PyTypeObject *)PyType_FromModuleAndSpec(m, &Lua_spec, NULL);
+	if (!Lua_type || PyModule_AddObject(m, "Lua",
+				(PyObject *)Lua_type) < 0) {
+               Py_DECREF(m);
+               return NULL;
+       }
+       Py_INCREF(Lua_type);
 
-	//fprintf(stderr, "creating type function.\n");
-	function_type = (PyTypeObject *)PyType_FromModuleAndSpec(m, FunctionType, NULL);
-	if (!function_type || PyModule_AddObject(m, "Function", (PyObject *)function_type) < 0) {
-		Py_DECREF(Lua_type);
-		Py_DECREF(m);
-		return NULL;
-	}
-	Py_INCREF(function_type);
+       function_type = (PyTypeObject *)PyType_FromModuleAndSpec(m,
+		       &function_spec, NULL);
+       if (!function_type || PyModule_AddObject(m, "Function",
+			       (PyObject *)function_type) < 0) {
+               Py_DECREF(Lua_type);
+               Py_DECREF(m);
+               return NULL;
+       }
+       Py_INCREF(function_type);
 
-	//fprintf(stderr, "creating type table.\n");
-	table_type = (PyTypeObject *)PyType_FromModuleAndSpec(m, TableType, NULL);
-	if (!table_type || PyModule_AddObject(m, "Table", (PyObject *)table_type) < 0) {
-		Py_DECREF(Lua_type);
-		Py_DECREF(function_type);
-		Py_DECREF(m);
-		return NULL;
-	}
-	Py_INCREF(table_type);
+       table_type = (PyTypeObject *)PyType_FromModuleAndSpec(m,
+		       &table_spec, NULL);
+       if (!table_type || PyModule_AddObject(m, "Table",
+			       (PyObject *)table_type) < 0) {
+               Py_DECREF(Lua_type);
+               Py_DECREF(function_type);
+               Py_DECREF(m);
+               return NULL;
+       }
+       Py_INCREF(table_type);
 
-	//fprintf(stderr, "creating type table_iter.\n");
-	table_iter_type = (PyTypeObject *)PyType_FromModuleAndSpec(m, TableIterType, NULL);
-	if (!table_iter_type || PyModule_AddObject(m, "TableIter", (PyObject *)table_iter_type) < 0) {
-		Py_DECREF(Lua_type);
-		Py_DECREF(function_type);
-		Py_DECREF(table_type);
-		Py_DECREF(m);
-		return NULL;
-	}
-	Py_INCREF(table_iter_type);
+       table_iter_type = (PyTypeObject *)PyType_FromModuleAndSpec(m,
+		       &table_iter_spec, NULL);
+       if (!table_iter_type || PyModule_AddObject(m, "TableIter",
+			       (PyObject *)table_iter_type) < 0) {
+               Py_DECREF(Lua_type);
+               Py_DECREF(function_type);
+               Py_DECREF(table_type);
+               Py_DECREF(m);
+               return NULL;
+       }
+       Py_INCREF(table_iter_type);
 
-	//fprintf(stderr, "done.\n");
 	return m;
 } // }}}
 

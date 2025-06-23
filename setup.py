@@ -14,7 +14,11 @@ module = Extension('lua',
 	],
 	language = 'c',
 	libraries = ['lua5.4'],
-	extra_compile_args = ['-I/usr/include/lua5.4'],
+	extra_compile_args = ['-I/usr/include/lua5.4',
+		       '-Wstack-protector', '-fstack-protector',
+		       '-D_FORTIFY_SOURCE=2', '-O1',
+		       '-Wformat', '-Wformat-security',
+		       '-Wl,-z,relro', '-Wl,-z,now'],
 )
 
 setup(name = 'lua-wrapper',

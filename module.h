@@ -142,10 +142,22 @@ extern PyTypeObject *function_type;
 extern PyTypeObject *table_type;
 extern PyTypeObject *table_iter_type;
 
+typedef struct UserdataData {
+	struct UserdataData *prev;
+	struct UserdataData *next;
+	PyObject *target;
+} UserdataData;
+
 typedef struct Lua { // {{{
 	PyObject_HEAD
+	// Linked list of userdata objects, for garbage collection.
+	UserdataData *first_userdata;
+
 	// Context for Lua environment.
 	lua_State *state;
+
+	// Doubly linked list of userdatas for garbage collection.
+	UserdataData *first_data;
 
 	// Copies of initial values of some globals, to use later regardless of them changing in Lua.
 	lua_Integer table_remove;
@@ -190,8 +202,9 @@ typedef struct Function { // {{{
 
 // Construct new function from value at top of stack.
 PyObject *Function_create(Lua *context);
-void Function_dealloc(Function *self);
-PyObject *Function_call(Function *self, PyObject *args, PyObject *keywords);
+int Function_init(PyObject *self, PyObject *args, PyObject *kwargs);
+void Function_dealloc(PyObject *self);
+PyObject *Function_call(PyObject *self, PyObject *args, PyObject *keywords);
 PyObject *Function_repr(PyObject *self);
 
 
@@ -206,7 +219,8 @@ typedef struct Table { // {{{
 } Table; // }}}
 
 // Construct new table from value at top of stack.
-PyObject *Table_create(Lua *context);
+PyObject *Table_create(Lua *lua);
+int Table_init(PyObject *self, PyObject *args, PyObject *kwargs);
 void Table_dealloc(PyObject *self);
 PyObject *Table_repr(PyObject *self);
 Py_ssize_t Table_len(PyObject *self);
@@ -219,7 +233,7 @@ PyObject *Table_sub(PyObject *self, PyObject *args);
 PyObject *Table_mul(PyObject *self, PyObject *args);
 PyObject *Table_div(PyObject *self, PyObject *args);
 PyObject *Table_mod(PyObject *self, PyObject *args);
-PyObject *Table_power(PyObject *self, PyObject *args);
+PyObject *Table_power(PyObject *self, PyObject *args, PyObject *mod);
 PyObject *Table_idiv(PyObject *self, PyObject *args);
 PyObject *Table_and(PyObject *self, PyObject *args);
 PyObject *Table_or(PyObject *self, PyObject *args);
@@ -228,8 +242,8 @@ PyObject *Table_lshift(PyObject *self, PyObject *args);
 PyObject *Table_rshift(PyObject *self, PyObject *args);
 PyObject *Table_concat(PyObject *self, PyObject *args);
 PyObject *Table_richcompare(PyObject *self, PyObject *args, int op);
-PyObject *Table_neg(PyObject *self, PyObject *args);
-PyObject *Table_not(PyObject *self, PyObject *args);
+PyObject *Table_neg(PyObject *self);
+PyObject *Table_not(PyObject *self);
 int Table_setitem(PyObject *self, PyObject *key, PyObject *value);
 PyObject *table_list_method(PyObject *self, PyObject *args);
 extern PyMethodDef Table_methods[];
@@ -251,12 +265,23 @@ typedef struct TableIter { // {{{
 	int icurrent;
 } TableIter; // }}}
 PyObject *Table_iter_create(PyObject *target, bool is_ipairs);
-void Table_iter_dealloc(TableIter *self);
+int Table_iter_init(PyObject *self);
+void Table_iter_dealloc(PyObject *self);
 PyObject *Table_iter_repr(PyObject *self);
 PyObject *Table_iter_iter(PyObject *self);
-PyObject *Table_iter_iternext(TableIter *self);
+PyObject *Table_iter_iternext(PyObject *self);
 
 // For internal use only.
 PyObject *Lua_run_code(Lua *self, int pos, bool keep_single, int nargs);
+
+// Garbage collection helpers.
+int Lua_traverse(PyObject *self, visitproc visit, void *arg);
+int function_traverse(PyObject *self, visitproc visit, void *arg);
+int table_traverse(PyObject *self, visitproc visit, void *arg);
+int table_iter_traverse(PyObject *self, visitproc visit, void *arg);
+int Lua_clear(PyObject *self);
+int function_clear(PyObject *self);
+int table_clear(PyObject *self);
+int table_iter_clear(PyObject *self);
 
 // vim: set foldmethod=marker :
