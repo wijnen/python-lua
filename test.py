@@ -1,4 +1,7 @@
 #!/usr/bin/python3
+
+import faulthandler
+faulthandler.enable()
 import lua
 
 # Setup.
@@ -47,38 +50,38 @@ class foo:
 code.set('foo', foo())
 
 # Test running Python operators from Lua.
-meta, f = code.run('''
-	python = require("python")
-	-- Set up a Lua table.
-	nn = {4, "x", y = 5}
-	print('1+2j + 1 = ' .. (p + 1))
-	print('1+2j - 1 = ' .. (p - 1))
-	print('1+2j * 2 = ' .. (p * 2))
-	print('1+2j / 2 = ' .. (p / 2))
-	print('foo % 2 = ' .. (foo % 2))
-	print('1+2j ^ 2 = ' .. (p ^ 2))
-	print('foo // 2 = ' .. (foo // 2))
-	print('foo & 2 = ' .. (foo & 2))
-	print('foo | 2 = ' .. (foo | 2))
-	print('foo << 2 = ' .. (foo << 2))
-	print('foo >> 2 = ' .. (foo >> 2))
-	print('1+2j .. 2 = ' .. (p .. 2))
-	print('foo ~ 2 = ' .. (foo ~ 2))
-	print('1+2j == 2 = ' .. tostring(p == 2))
-	print('foo < 2 = ' .. tostring(foo < 2))
-	print('foo <= 2 = ' .. tostring(foo <= 2))
-	print('-(1+2j) = ' .. -p)
-	print('~foo = ' .. ~foo)
-	print('#foo = ' .. #foo)
-	print('a[2]="x"')
-	a[2] = "x"
-	print(a)
-	print('a[2] = ' .. a[2])
-	print('m(1+2j, nn) = ')
-	print(m(p, nn))
-	print('tostring(1+2j) = ' .. tostring(p))
+code.run('python = require("python")')
+# Set up a Lua table.
+code.run('nn = {4, "x", y = 5}')
+code.run('print("1+2j + 1 = " .. (p + 1))')
+code.run('print("1+2j - 1 = " .. (p - 1))')
+code.run('print("1+2j * 2 = " .. (p * 2))')
+code.run('print("1+2j / 2 = " .. (p / 2))')
+code.run('print("foo % 2 = " .. (foo % 2))')
+code.run('print("1+2j ^ 2 = " .. (p ^ 2))')
+code.run('print("foo // 2 = " .. (foo // 2))')
+code.run('print("foo & 2 = " .. (foo & 2))')
+code.run('print("foo | 2 = " .. (foo | 2))')
+code.run('print("foo << 2 = " .. (foo << 2))')
+code.run('print("foo >> 2 = " .. (foo >> 2))')
+code.run('print("1+2j .. 2 = " .. (p .. 2))')
+code.run('print("foo ~ 2 = " .. (foo ~ 2))')
+code.run('print("1+2j == 2 = " .. tostring(p == 2))')
+code.run('print("foo < 2 = " .. tostring(foo < 2))')
+code.run('print("foo <= 2 = " .. tostring(foo <= 2))')
+code.run('print("-(1+2j) = " .. -p)')
+code.run('print("~foo = " .. ~foo)')
+code.run('print("#foo = " .. #foo)')
+code.run('print("a[2]=x")')
+code.run('a[2] = "x"')
+code.run('print(a)')
+code.run('print("a[2] = " .. a[2])')
+code.run('print("m(1+2j, nn) = ")')
+code.run('print(m(p, nn))')
+code.run('print("tostring(1+2j) = " .. tostring(p))')
 
-	-- Now test calls from python to lua.
+# Now test calls from python to lua.
+code.run('''
 	meta = {
 		__add = function(self, other) return "add" .. other end,
 		__sub = function(self, other) return "sub" .. other end,
@@ -104,10 +107,10 @@ meta, f = code.run('''
 			rawset(self, key, value * 3)
 		end,
 	}
-	function f(a, b, c) return a .. b .. c end
-	setmetatable(nn, meta)
-	return nn, f
 ''')
+code.run('function f(a, b, c) return a .. b .. c end')
+code.run('setmetatable(nn, meta)')
+meta, f = code.run('return nn, f')
 code.run(b'print("running bytes object with non-utf-8: \x88")')
 
 print('add', meta + 3)

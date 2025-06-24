@@ -42,28 +42,6 @@ PyObject *Table_create(Lua *context) // {{{
 	return (PyObject *)self;
 } // }}}
 
-int Table_init(PyObject *py_self, PyObject *args, PyObject *kwargs) // {{{
-{
-	if (!PyObject_IsInstance(py_self, (PyObject *)table_type)) {
-		PyErr_SetString(PyExc_ValueError,
-				"Table init called on wrong type");
-		return -1;
-	}
-	Table *self = (Table *)py_self;
-	// The only argument must be a Lua object.
-	PyObject *py_parent;
-	if (!PyArg_ParseTuple(args, "O", &py_parent))
-		return -1;
-	if (!PyObject_IsInstance(py_parent, (PyObject *)Lua_type)) {
-		PyErr_SetString(PyExc_ValueError,
-				"Table init requires a lua object");
-		return -1;
-	}
-	setup_table(self, (Lua *)py_parent);
-	//fprintf(stderr, "alloc table %p\n", self);
-	return 0;
-}; // }}}
-
 // Destructor.
 void Table_dealloc(PyObject *self_obj) { // {{{
 	//fprintf(stderr, "dealloc %p refcnt %ld\n", self, Py_REFCNT((PyObject *)self));
@@ -712,6 +690,8 @@ int table_traverse(PyObject *self, visitproc visit, void *arg) // {{{
 	PyObject_VisitManagedDict((PyObject*)self, visit, arg);
 	Table *table = (Table *)self;
 	Py_VISIT(table->lua);
+	// Visit type.
+	Py_VISIT(Py_TYPE(self));
 	return 0;
 } // }}}
 
@@ -721,6 +701,8 @@ int table_iter_traverse(PyObject *self, visitproc visit, void *arg) // {{{
 	TableIter *iter = (TableIter *)self;
 	Py_VISIT(iter->target);
 	Py_VISIT(iter->current);
+	// Visit type.
+	Py_VISIT(Py_TYPE(self));
 	return 0;
 } // }}}
 

@@ -23,28 +23,7 @@ PyObject *Function_create(Lua *context) { // {{{
 	if (!self)
 		return NULL;
 
-	return (PyObject *)self;
-}; // }}}
-
-// Initialization.
-int Function_init(PyObject *py_self, PyObject *args, PyObject *kwargs) // {{{
-{
-	if (!PyObject_IsInstance(py_self, (PyObject *)function_type)) {
-		PyErr_SetString(PyExc_ValueError,
-				"Function init called on wrong type");
-		return -1;
-	}
-	Function *self = (Function *)py_self;
-	// The only argument must be a Lua object.
-	PyObject *py_parent;
-	if (!PyArg_ParseTuple(args, "O", &py_parent))
-		return -1;
-	if (!PyObject_IsInstance(py_parent, (PyObject *)Lua_type)) {
-		PyErr_SetString(PyExc_ValueError,
-				"Function init requires a lua object");
-		return -1;
-	}
-	self->lua = (Lua *)py_parent;
+	self->lua = context;
 	Py_INCREF((PyObject *)(self->lua));
 
 	// Wrap function at top of lua stack,
@@ -128,6 +107,8 @@ int function_traverse(PyObject *self, visitproc visit, void *arg) // {{{
 	PyObject_VisitManagedDict((PyObject*)self, visit, arg);
 	Function *func = (Function *)self;
 	Py_VISIT(func->lua);
+	// Visit type.
+	Py_VISIT(Py_TYPE(self));
 	return 0;
 } // }}}
 

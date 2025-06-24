@@ -524,7 +524,9 @@ static int Lua_init(PyObject *py_self, PyObject *args, PyObject *keywords)
 static void Lua_dealloc(PyObject *py_self) { // {{{
 	Lua *self = (Lua *)py_self;
 	lua_close(self->state);
-	Lua_type->tp_free((PyObject *)self);
+	PyObject_GC_UnTrack(py_self);
+	Lua_clear(py_self);
+	Py_TYPE(self)->tp_free(py_self);
 } // }}}
 
 // set variable in Lua.
@@ -721,8 +723,10 @@ void Lua_push(Lua *self, PyObject *obj) { // {{{
 int Lua_traverse(PyObject *py_self, visitproc visit, void *arg) // {{{
 {
 	PyObject_VisitManagedDict(py_self, visit, arg);
-	// Visit every userdata.
 	Lua *self = (Lua *)py_self;
+	// Visit type.
+	Py_VISIT(Py_TYPE(self));
+	// Visit every userdata.
 	for (UserdataData *data = self->first_userdata; data; data = data->next)
 		Py_VISIT(data->target);
 	return 0;
@@ -869,7 +873,6 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 	static PyType_Slot function_slots[] = { // {{{
 		{ Py_tp_traverse, &function_traverse },
 		{ Py_tp_clear, &function_clear },
-		{ Py_tp_init, &Function_init },
 		{ Py_tp_dealloc, &Function_dealloc },
 		{ Py_tp_doc, "Access a Lua-owned function from Python" },
 		{ Py_tp_call, &Function_call },
@@ -888,7 +891,6 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 	static PyType_Slot table_slots[] = { // {{{
 		{ Py_tp_traverse, &table_traverse },
 		{ Py_tp_clear, &table_clear },
-		{ Py_tp_init, &Table_init },
 		{ Py_tp_dealloc, &Table_dealloc },
 		{ Py_tp_doc, "Access a Lua-owned table from Python" },
 		{ Py_tp_repr, &Table_repr },
@@ -930,7 +932,6 @@ PyMODINIT_FUNC PyInit_lua() { // {{{
 	static PyType_Slot table_iter_slots[] = { // {{{
 		{ Py_tp_traverse, &table_iter_traverse },
 		{ Py_tp_clear, &table_iter_clear },
-		{ Py_tp_init, &Table_iter_init },
 		{ Py_tp_dealloc, &Table_iter_dealloc },
 		{ Py_tp_doc, "iterator for lua.table" },
 		{ Py_tp_repr, &Table_iter_repr },

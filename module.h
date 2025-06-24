@@ -202,7 +202,6 @@ typedef struct Function { // {{{
 
 // Construct new function from value at top of stack.
 PyObject *Function_create(Lua *context);
-int Function_init(PyObject *self, PyObject *args, PyObject *kwargs);
 void Function_dealloc(PyObject *self);
 PyObject *Function_call(PyObject *self, PyObject *args, PyObject *keywords);
 PyObject *Function_repr(PyObject *self);
@@ -220,7 +219,6 @@ typedef struct Table { // {{{
 
 // Construct new table from value at top of stack.
 PyObject *Table_create(Lua *lua);
-int Table_init(PyObject *self, PyObject *args, PyObject *kwargs);
 void Table_dealloc(PyObject *self);
 PyObject *Table_repr(PyObject *self);
 Py_ssize_t Table_len(PyObject *self);
@@ -265,7 +263,6 @@ typedef struct TableIter { // {{{
 	int icurrent;
 } TableIter; // }}}
 PyObject *Table_iter_create(PyObject *target, bool is_ipairs);
-int Table_iter_init(PyObject *self);
 void Table_iter_dealloc(PyObject *self);
 PyObject *Table_iter_repr(PyObject *self);
 PyObject *Table_iter_iter(PyObject *self);

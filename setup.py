@@ -18,7 +18,7 @@ module = Extension('lua',
 		       '-Wstack-protector', '-fstack-protector',
 		       '-D_FORTIFY_SOURCE=2', '-O1',
 		       '-Wformat', '-Wformat-security',
-		       '-Wl,-z,relro', '-Wl,-z,now'],
+		       '-Wl,-z,relro', '-Wl,-z,now', '-ggdb3'],
 )
 
 setup(name = 'lua-wrapper',
