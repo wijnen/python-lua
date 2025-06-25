@@ -545,8 +545,10 @@ static PyObject *return_stack(Lua *self, int pos, bool keep_single) // {{{
 		ret = PyTuple_New(size);
 		if (ret == NULL)
 			return NULL;
-		for (int i = 0; i < size; ++i)
-			PyTuple_SET_ITEM(ret, i, Lua_to_python(self, -size + i));
+		for (int i = 0; i < size; ++i) {
+			PyObject *obj = Lua_to_python(self, -size + i);
+			PyTuple_SET_ITEM(ret, i, obj);
+		}
 		lua_settop(self->state, pos);
 		return ret;
 	} else if (size == 1) {
@@ -688,6 +690,7 @@ PyObject *Lua_to_python(Lua *self, int index) { // {{{
 		ret = PyErr_Format(PyExc_ValueError,
 				"Invalid type %x passed to Lua_to_python",
 				type);
+		printf("Invalid type %x\n", type);
 		break;
 	}
 	PyGILState_Release(state);

@@ -50,9 +50,12 @@ class foo:
 code.set('foo', foo())
 
 # Test running Python operators from Lua.
+print('require python')
 code.run('python = require("python")')
 # Set up a Lua table.
+print('create table')
 code.run('nn = {4, "x", y = 5}')
+print('running operators')
 code.run('print("1+2j + 1 = " .. (p + 1))')
 code.run('print("1+2j - 1 = " .. (p - 1))')
 code.run('print("1+2j * 2 = " .. (p * 2))')
@@ -108,9 +111,13 @@ code.run('''
 		end,
 	}
 ''')
+print('defining function')
 code.run('function f(a, b, c) return a .. b .. c end')
+print('setting meta table')
 code.run('setmetatable(nn, meta)')
+print('get function and array from Lua')
 meta, f = code.run('return nn, f')
+print('testing bytes')
 code.run(b'print("running bytes object with non-utf-8: \x88")')
 
 print('add', meta + 3)

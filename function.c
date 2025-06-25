@@ -20,8 +20,11 @@
 // Create new Function from value at top of stack.
 PyObject *Function_create(Lua *context) { // {{{
 	Function *self = PyObject_GC_New(Function, function_type);
-	if (!self)
+	if (!self) {
+		PyErr_SetString(PyExc_MemoryError,
+				"Failed to allocate function");
 		return NULL;
+	}
 
 	self->lua = context;
 	Py_INCREF((PyObject *)(self->lua));
@@ -30,7 +33,7 @@ PyObject *Function_create(Lua *context) { // {{{
 	// which must have been pushed before calling this.
 	self->id = luaL_ref(self->lua->state, LUA_REGISTRYINDEX);
 	PyObject_GC_Track((PyObject *)self);
-	return 0;
+	return (PyObject *)self;
 } // }}}
 
 // Destructor.
