@@ -15,7 +15,7 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  * }}} */
 
-#define DEBUG_ITER
+//#define DEBUG_ITER
 #include "module.h"
 
 static Table *check(PyObject *table) // {{{
@@ -391,7 +391,7 @@ static PyObject *dict_method(PyObject *self, PyObject *args) // {{{
 	lua_rawgeti(target->lua->state, LUA_REGISTRYINDEX, target->id);
 	lua_pushnil(target->lua->state);
 	while (lua_next(target->lua->state, -2) != 0) {
-		Lua_dump_stack(target->lua);
+		//Lua_dump_stack(target->lua);
 		PyObject *key = Lua_to_python(target->lua, -2);
 		PyObject *value = Lua_to_python(target->lua, -1);
 		bool fail = PyDict_SetItem(ret, key, value) < 0;
